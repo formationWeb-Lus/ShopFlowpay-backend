@@ -1,0 +1,607 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================
+// USER
+// =====================================================
+model User {
+  id                 Int                @id @default(autoincrement())
+  name               String?
+  email              String             @unique
+  phone              String?
+  password           String
+  slug               String?            @unique
+
+  role               UserRole           @default(USER)
+  subscriptionStatus SubscriptionStatus @default(FREE)
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  apiKeys       ApiKey[]
+  company       Company?
+  customers     Customer[]
+  paymentConfig MerchantPaymentConfig?
+  payments      Payment[]
+  paymentPages  PaymentPage[]
+  products      Product[]
+  subscriptions Subscription[]
+  webhooks      Webhook[]
+
+  wallet             Wallet?
+  walletTransactions WalletTransaction[]
+  withdrawals        Withdrawal[]
+  socialAccounts     SocialAccount[]
+  socialPublications SocialPublication[]
+}
+// =====================================================
+// SOCIAL ACCOUNT
+// =====================================================
+
+model SocialAccount {
+  id Int @id @default(autoincrement())
+
+  userId Int
+
+  // Réseau social
+  provider SocialProvider
+
+  // Identifiant du compte sur le réseau
+  providerAccountId String
+
+  // Nom / username affiché
+  username String?
+
+  displayName String?
+
+  profileImageUrl String?
+
+  // Tokens OAuth
+  accessToken  String
+  refreshToken String?
+
+  // Expiration du token
+  tokenExpiresAt DateTime?
+
+  // Permissions accordées
+  scopes Json?
+
+  // Informations supplémentaires retournées
+  metadata Json?
+
+  // Compte actif
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  publications SocialPublication[]
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@index([provider])
+}
+
+// =====================================================
+// SOCIAL PROVIDER
+// =====================================================
+
+enum SocialProvider {
+  FACEBOOK
+  INSTAGRAM
+  TIKTOK
+  WHATSAPP
+  LINKEDIN
+  X
+}
+
+model SocialPublication {
+  id Int @id @default(autoincrement())
+
+  userId          Int
+  socialAccountId Int
+  productId       Int?
+
+  provider SocialProvider
+
+  externalPostId String?
+
+  content String?
+
+  mediaUrls Json?
+
+  postUrl String?
+
+  status SocialPublicationStatus @default(PENDING)
+
+  errorMessage String?
+
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([socialAccountId])
+  @@index([productId])
+  @@index([provider])
+}
+
+// =====================================================
+// PUBLICATION STATUS
+// =====================================================
+
+enum SocialPublicationStatus {
+  PENDING
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+// =====================================================
+// ENROLLMENT / INSCRIPTION
+// =====================================================
+model Enrollment {
+  id Int @id @default(autoincrement())
+
+  productId  Int
+  customerId Int
+
+  name  String
+  email String?
+  phone String?
+
+  data Json?
+
+  paymentId Int? @unique
+
+  amountPaid Float
+  currency   Currency
+
+  status EnrollmentStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product  Product  @relation(fields: [productId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  payment Payment? @relation(fields: [paymentId], references: [id])
+
+  @@index([productId])
+  @@index([customerId])
+}
+
+enum EnrollmentStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
+// =====================================================
+// COMPANY
+// =====================================================
+
+model Company {
+  id        Int      @id @default(autoincrement())
+  slug      String   @unique
+  name      String
+  logo      String?
+  address   String?
+  phone     String?
+  email     String?
+  userId    Int      @unique
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// =====================================================
+// PLAN
+// =====================================================
+
+model Plan {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  priceUSD    Float
+  priceCDF    Float
+  maxProducts Int?
+  features    Json?
+  createdAt   DateTime @default(now())
+
+  subscriptions Subscription[]
+}
+
+// =====================================================
+// SUBSCRIPTION
+// =====================================================
+
+model Subscription {
+  id        Int                @id @default(autoincrement())
+  userId    Int
+  planId    Int
+  status    SubscriptionStatus @default(PENDING)
+  startDate DateTime?
+  endDate   DateTime?
+  autoRenew Boolean            @default(true)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  payments Payment[]
+
+  plan Plan @relation(fields: [planId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+}
+
+// =====================================================
+// PRODUCT
+// =====================================================
+
+model ProductField {
+  id        Int @id @default(autoincrement())
+  productId Int
+
+  name     String
+  label    String
+  type     ProductFieldType
+  value    String?
+  required Boolean          @default(false)
+
+  product Product @relation(fields: [productId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+enum ProductFieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  PHONE
+  EMAIL
+  DATE
+  SELECT
+  IMAGE
+  FILE
+  BOOLEAN
+}
+
+model Product {
+  id     Int @id @default(autoincrement())
+  userId Int
+
+  name        String
+  subtitle    String?
+  description String?
+
+  type ProductType
+
+  price    Float
+  currency Currency @default(USD)
+
+  imageUrl String?
+
+  status ProductStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+
+  paymentPageProducts PaymentPageProduct[]
+
+  user User @relation(fields: [userId], references: [id])
+
+  paymentConfigs ProductPaymentConfig[]
+
+  fields      ProductField[]
+  enrollments Enrollment[]
+
+  socialPublications SocialPublication[]
+}
+
+// =====================================================
+// PAYMENT PAGE
+// =====================================================
+model PaymentPage {
+  id          Int     @id @default(autoincrement())
+  userId      Int
+  title       String
+  slug        String  @unique
+  description String?
+  active      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products     PaymentPageProduct[]
+  user         User                 @relation(fields: [userId], references: [id])
+  transactions Transaction[]
+
+  @@index([userId])
+  @@index([active])
+}
+
+model PaymentPageProduct {
+  id            Int @id @default(autoincrement())
+  paymentPageId Int
+  productId     Int
+
+  paymentPage PaymentPage @relation(fields: [paymentPageId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([paymentPageId, productId])
+  @@index([paymentPageId])
+  @@index([productId])
+}
+
+// =====================================================
+// CUSTOMER
+// =====================================================
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  name      String
+  email     String?
+  phone     String?
+  createdAt DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id])
+  payments    Payment[]
+  enrollments Enrollment[]
+}
+
+// =====================================================
+// PAYMENT
+// =====================================================
+
+model Payment {
+  id             Int           @id @default(autoincrement())
+  userId         Int?
+  subscriptionId Int?
+  customerId     Int?
+  transactionId  String?       @unique
+  sessionId      String?
+  amount         Float
+  currency       Currency
+  telecom        Telecom?
+  phone          String?
+  status         PaymentStatus @default(PENDING)
+  createdAt      DateTime      @default(now())
+
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  user         User?         @relation(fields: [userId], references: [id])
+
+  walletTransactions WalletTransaction[]
+  enrollment         Enrollment?
+}
+
+// =====================================================
+// TRANSACTION
+// =====================================================
+
+model Transaction {
+  id            Int           @id @default(autoincrement())
+  paymentPageId Int
+  customerName  String?
+  customerPhone String?
+  amount        Float
+  currency      Currency
+  status        PaymentStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+
+  paymentPage PaymentPage @relation(fields: [paymentPageId], references: [id])
+}
+
+// =====================================================
+// MERCHANT PAYMENT CONFIG
+// =====================================================
+
+model MerchantPaymentConfig {
+  id        Int                 @id @default(autoincrement())
+  userId    Int                 @unique
+  airtel    String?
+  orange    String?
+  mpesa     String?
+  afrimoney String?
+  visa      String?
+  createdAt DateTime            @default(now())
+  status    PaymentConfigStatus @default(PENDING)
+  updatedAt DateTime            @updatedAt
+
+  user     User                   @relation(fields: [userId], references: [id])
+  products ProductPaymentConfig[]
+}
+
+// =====================================================
+// API KEY
+// =====================================================
+
+model ApiKey {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  key       String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// =====================================================
+// WEBHOOK
+// =====================================================
+
+model Webhook {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  url       String
+  event     String
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// =====================================================
+// PRODUCT PAYMENT CONFIG
+// =====================================================
+
+model ProductPaymentConfig {
+  id              Int      @id @default(autoincrement())
+  productId       Int
+  paymentConfigId Int
+  active          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  paymentConfig MerchantPaymentConfig @relation(fields: [paymentConfigId], references: [id])
+  product       Product               @relation(fields: [productId], references: [id])
+
+  @@unique([productId, paymentConfigId])
+}
+
+// =====================================================
+// WALLET
+// =====================================================
+
+model Wallet {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @unique
+  balanceUSD Float    @default(0)
+  balanceCDF Float    @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id])
+  transactions WalletTransaction[]
+}
+
+// =====================================================
+// WALLET TRANSACTION
+// =====================================================
+model WalletTransaction {
+  id           Int                   @id @default(autoincrement())
+  walletId     Int
+  userId       Int
+  paymentId    Int?
+  withdrawalId Int?                  @unique
+  type         WalletTransactionType
+  amount       Float
+  currency     Currency
+  reference    String?               @unique
+  description  String?
+  createdAt    DateTime              @default(now())
+
+  wallet     Wallet      @relation(fields: [walletId], references: [id])
+  user       User        @relation(fields: [userId], references: [id])
+  payment    Payment?    @relation(fields: [paymentId], references: [id])
+  withdrawal Withdrawal? @relation(fields: [withdrawalId], references: [id])
+}
+
+// =====================================================
+// WITHDRAWAL
+// =====================================================
+
+model Withdrawal {
+  id          Int              @id @default(autoincrement())
+  userId      Int
+  amount      Float
+  currency    Currency
+  phone       String
+  telecom     Telecom
+  status      WithdrawalStatus @default(PENDING)
+  adminNote   String?
+  createdAt   DateTime         @default(now())
+  processedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+
+  walletTransaction WalletTransaction?
+}
+
+// =====================================================
+// ENUMS
+// =====================================================
+
+enum PaymentConfigStatus {
+  PENDING
+  ACTIVE
+  DISABLED
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  MERCHANT
+}
+
+enum SubscriptionStatus {
+  FREE
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum ProductType {
+  PHYSICAL
+  DIGITAL
+  COURSE
+  SERVICE
+  SCHOOL
+  SUBSCRIPTION
+}
+
+enum ProductStatus {
+  DRAFT
+  PENDING
+  PUBLISHED
+  DISABLED
+}
+
+enum Currency {
+  USD
+  CDF
+}
+
+enum Telecom {
+  AM
+  OM
+  MP
+  AF
+}
+
+enum WalletTransactionType {
+  SALE
+  WITHDRAWAL
+  REFUND
+  ADJUSTMENT
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  COMPLETED
+  REJECTED
+}
