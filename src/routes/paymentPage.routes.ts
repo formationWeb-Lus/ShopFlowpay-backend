@@ -11,11 +11,18 @@ import {
 
 import { authenticateToken } from "../middlewares/auth.middleware";
 
+import {
+  requireActiveSubscription
+} from "../middlewares/subscription.middleware";
+
+
 const router = Router();
+
 
 // =====================================================
 // PAGES DU MARCHAND CONNECTÉ
 // =====================================================
+
 
 // GET /api/payment-pages
 router.get(
@@ -24,12 +31,19 @@ router.get(
   getMyPaymentPages
 );
 
+
+
 // POST /api/payment-pages
+// Création d'une page de paiement
+// nécessite un abonnement actif
 router.post(
   "/",
   authenticateToken,
+  requireActiveSubscription,
   createPaymentPage
 );
+
+
 
 // GET /api/payment-pages/:id
 router.get(
@@ -38,12 +52,18 @@ router.get(
   getPaymentPageById
 );
 
+
+
 // PATCH /api/payment-pages/:id/activate
+// Activation nécessite un abonnement actif
 router.patch(
   "/:id/activate",
   authenticateToken,
+  requireActiveSubscription,
   activatePaymentPage
 );
+
+
 
 // PATCH /api/payment-pages/:id/deactivate
 router.patch(
@@ -52,11 +72,15 @@ router.patch(
   deactivatePaymentPage
 );
 
+
+
 // DELETE /api/payment-pages/:id
 router.delete(
   "/:id",
   authenticateToken,
   deletePaymentPage
 );
+
+
 
 export default router;

@@ -1,4 +1,3 @@
-
 import { Router } from "express";
 
 import {
@@ -12,22 +11,40 @@ import {
 
 import { authenticateToken } from "../middlewares/auth.middleware";
 
+import {
+  requireActiveSubscription
+} from "../middlewares/subscription.middleware";
+
+import {
+ requirePaymentSubscription
+} from "../middlewares/paymentSubscription.middleware";
+import { savePaymentConfig } from "../controllers/paymentConfig.controller";
+
+
 const router = Router();
+
+
 
 /* =========================================================
    CREATE PRODUCT
    POST /api/product
-========================================================= */
 
+   gratiut
+========================================================= */
 router.post(
   "/",
   authenticateToken,
   createProduct
 );
 
+
+
+
 /* =========================================================
    GET MY PRODUCTS
    GET /api/product
+
+   Lecture des produits utilisateur
 ========================================================= */
 
 router.get(
@@ -35,6 +52,9 @@ router.get(
   authenticateToken,
   getMyProducts
 );
+
+
+
 
 /* =========================================================
    GET PRODUCT BY ID
@@ -47,20 +67,34 @@ router.get(
   getProductById
 );
 
+
+
+
 /* =========================================================
    UPDATE PRODUCT
    PUT /api/product/:id
+
+   Nécessite :
+   - Authentification
+   - Abonnement actif
 ========================================================= */
 
+
 router.put(
-  "/:id",
+  "/product/:productId",
   authenticateToken,
-  updateProduct
+  requirePaymentSubscription,
+  savePaymentConfig
 );
+
+
+
 
 /* =========================================================
    DELETE PRODUCT
    DELETE /api/product/:id
+
+   Suppression autorisée avec authentification
 ========================================================= */
 
 router.delete(
@@ -69,16 +103,25 @@ router.delete(
   deleteProduct
 );
 
+
+
+
 /* =========================================================
    PUBLISH PRODUCT
    PATCH /api/product/:id/publish
+
+   Nécessite :
+   - Authentification
+   - Abonnement actif
 ========================================================= */
 
 router.patch(
   "/:id/publish",
   authenticateToken,
+  requireActiveSubscription,
   publishProduct
 );
 
-export default router;
 
+
+export default router;

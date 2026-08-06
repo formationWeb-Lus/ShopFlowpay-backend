@@ -9,6 +9,10 @@ import {
 
 import prisma from "../lib/prisma";
 
+import {
+ checkProductLimit
+} from "../services/subscription.service";
+
 /* =========================================================
    TYPES
 ========================================================= */
@@ -238,6 +242,7 @@ export const createProduct = async (
       });
     }
 
+
     /* -----------------------------------------------------
        BODY
     ----------------------------------------------------- */
@@ -280,6 +285,14 @@ export const createProduct = async (
     /* -----------------------------------------------------
        CREATE
     ----------------------------------------------------- */
+
+   /* -----------------------------------------------------
+   CHECK PRODUCT LIMIT
+----------------------------------------------------- */
+
+
+
+
 
     const product =
       await prisma.product.create({
@@ -903,8 +916,37 @@ export const publishProduct = async (
     }
 
     /* -----------------------------------------------------
-       PUBLISH
-    ----------------------------------------------------- */
+   CHECK SUBSCRIPTION
+----------------------------------------------------- */
+
+try {
+
+  const limit = await checkProductLimit(userId);
+
+  if (!limit.allowed) {
+    return res.status(403).json({
+      success: false,
+      code: "SUBSCRIPTION_REQUIRED",
+      message:
+        "Vous devez souscrire à un abonnement pour publier ce produit.",
+    });
+  }
+
+} catch {
+
+  return res.status(403).json({
+    success: false,
+    code: "SUBSCRIPTION_REQUIRED",
+    message:
+      "Vous devez souscrire à un abonnement pour publier ce produit.",
+  });
+
+}
+
+/* -----------------------------------------------------
+   PUBLISH
+----------------------------------------------------- */
+
 
     const updatedProduct =
       await prisma.product.update({

@@ -1,4 +1,3 @@
-
 import { Router } from "express";
 
 import {
@@ -20,19 +19,8 @@ const router = Router();
 // =====================================================
 // GET AVAILABLE PLANS
 // =====================================================
-//
 // GET /api/subscriptions/plans
-//
-// Route PUBLIQUE.
-//
-// Permet au frontend de récupérer les plans disponibles
-// sans avoir besoin d'un token JWT.
-//
-// Retourne par exemple :
-// Starter
-// Business
-// Premium
-//
+// PUBLIC
 // =====================================================
 
 router.get(
@@ -41,17 +29,10 @@ router.get(
 );
 
 
+
 // =====================================================
 // CREATE SUBSCRIPTION
-// =====================================================
-//
 // POST /api/subscriptions
-//
-// Route protégée.
-//
-// L'utilisateur doit être authentifié pour créer
-// une demande d'abonnement.
-//
 // =====================================================
 
 router.post(
@@ -61,16 +42,10 @@ router.post(
 );
 
 
+
 // =====================================================
 // GET MY SUBSCRIPTION
-// =====================================================
-//
 // GET /api/subscriptions/my
-//
-// Route protégée.
-//
-// Retourne l'abonnement de l'utilisateur connecté.
-//
 // =====================================================
 
 router.get(
@@ -80,26 +55,10 @@ router.get(
 );
 
 
+
 // =====================================================
 // SUBSCRIPTION PAYMENT
-// =====================================================
-//
 // POST /api/subscriptions/payment
-//
-// Route protégée.
-//
-// Le frontend envoie notamment :
-//
-// {
-//   planId,
-//   clientPhone,
-//   amount,
-//   currency,
-//   telecom
-// }
-//
-// Le controller appelle ensuite SerdiPay.
-//
 // =====================================================
 
 router.post(
@@ -109,16 +68,10 @@ router.post(
 );
 
 
+
 // =====================================================
 // CANCEL SUBSCRIPTION
-// =====================================================
-//
 // PATCH /api/subscriptions/cancel
-//
-// Route protégée.
-//
-// Annule l'abonnement actif de l'utilisateur connecté.
-//
 // =====================================================
 
 router.patch(
@@ -128,8 +81,5 @@ router.patch(
 );
 
 
-// =====================================================
-// EXPORT
-// =====================================================
 
 export default router;

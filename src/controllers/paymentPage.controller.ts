@@ -1,3 +1,4 @@
+
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 
@@ -14,7 +15,8 @@ const prisma = new PrismaClient();
  * {
  *   productId: 1,
  *   title: "Acheter ma formation",
- *   description: "Formation complète..."
+ *   description: "Formation complète...",
+ *   slug: "ma-formation"
  * }
  */
 export const createPaymentPage = async (
@@ -101,14 +103,27 @@ export const createPaymentPage = async (
     }
 
     // -------------------------------------------------
-    // VÉRIFIER SI UNE PAGE EXISTE DÉJÀ
+    // VÉRIFIER SI LE PRODUIT A DÉJÀ UNE PAGE
     // -------------------------------------------------
 
     const existingPage =
       await prisma.paymentPage.findFirst({
         where: {
-          productId: numericProductId,
           userId,
+
+          products: {
+            some: {
+              productId: numericProductId,
+            },
+          },
+        },
+
+        include: {
+          products: {
+            include: {
+              product: true,
+            },
+          },
         },
       });
 
@@ -135,20 +150,25 @@ export const createPaymentPage = async (
       finalSlug = slug
         .trim()
         .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
     } else {
       const baseSlug = product.name
         .trim()
         .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
 
-      finalSlug = `${baseSlug}-${product.id}`;
+      finalSlug =
+        `${baseSlug}-${product.id}`;
     }
 
     // -------------------------------------------------
-    // VÉRIFIER SLUG
+    // SÉCURISER LE SLUG
     // -------------------------------------------------
 
     const existingSlug =
@@ -159,7 +179,8 @@ export const createPaymentPage = async (
       });
 
     if (existingSlug) {
-      finalSlug = `${finalSlug}-${Date.now()}`;
+      finalSlug =
+        `${finalSlug}-${Date.now()}`;
     }
 
     // -------------------------------------------------
@@ -170,7 +191,6 @@ export const createPaymentPage = async (
       await prisma.paymentPage.create({
         data: {
           userId,
-          productId: numericProductId,
 
           title: title.trim(),
 
@@ -183,10 +203,25 @@ export const createPaymentPage = async (
               : product.description,
 
           active: false,
+
+          // -------------------------------------------
+          // ASSOCIATION DU PRODUIT
+          // -------------------------------------------
+
+          products: {
+            create: {
+              productId:
+                numericProductId,
+            },
+          },
         },
 
         include: {
-          product: true,
+          products: {
+            include: {
+              product: true,
+            },
+          },
         },
       });
 
@@ -202,7 +237,9 @@ export const createPaymentPage = async (
 
       paymentPage,
     });
+
   } catch (error) {
+
     console.error(
       "CREATE PAYMENT PAGE ERROR:",
       error
@@ -223,15 +260,13 @@ export const createPaymentPage = async (
  * =====================================================
  *
  * GET /api/payment-pages
- *
- * Retourne les pages de paiement
- * de l'utilisateur connecté.
  */
 export const getMyPaymentPages = async (
   req: Request,
   res: Response
 ) => {
   try {
+
     // -------------------------------------------------
     // UTILISATEUR
     // -------------------------------------------------
@@ -243,7 +278,8 @@ export const getMyPaymentPages = async (
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "Utilisateur non authentifié.",
+        message:
+          "Utilisateur non authentifié.",
       });
     }
 
@@ -262,7 +298,12 @@ export const getMyPaymentPages = async (
         },
 
         include: {
-          products: true,
+
+          products: {
+            include: {
+              product: true,
+            },
+          },
 
           transactions: {
             orderBy: {
@@ -276,7 +317,8 @@ export const getMyPaymentPages = async (
     // STATISTIQUES
     // -------------------------------------------------
 
-    const totalPages = paymentPages.length;
+    const totalPages =
+      paymentPages.length;
 
     const activePages =
       paymentPages.filter(
@@ -286,7 +328,8 @@ export const getMyPaymentPages = async (
     const totalPayments =
       paymentPages.reduce(
         (total, page) =>
-          total + page.transactions.length,
+          total +
+          page.transactions.length,
         0
       );
 
@@ -297,7 +340,8 @@ export const getMyPaymentPages = async (
           page.transactions
             .filter(
               (transaction) =>
-                transaction.status === "SUCCESS"
+                transaction.status ===
+                "SUCCESS"
             )
             .reduce(
               (sum, transaction) =>
@@ -312,6 +356,7 @@ export const getMyPaymentPages = async (
     // -------------------------------------------------
 
     return res.status(200).json({
+
       success: true,
 
       paymentPages,
@@ -322,8 +367,11 @@ export const getMyPaymentPages = async (
         totalPayments,
         totalAmount,
       },
+
     });
+
   } catch (error) {
+
     console.error(
       "GET MY PAYMENT PAGES ERROR:",
       error
@@ -350,6 +398,7 @@ export const getPaymentPageById = async (
   res: Response
 ) => {
   try {
+
     // -------------------------------------------------
     // UTILISATEUR
     // -------------------------------------------------
@@ -361,7 +410,8 @@ export const getPaymentPageById = async (
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "Utilisateur non authentifié.",
+        message:
+          "Utilisateur non authentifié.",
       });
     }
 
@@ -369,16 +419,9 @@ export const getPaymentPageById = async (
     // ID
     // -------------------------------------------------
 
-    const idParam = req.params.id;
-
-    if (typeof idParam !== "string") {
-      return res.status(400).json({
-        success: false,
-        message: "ID invalide.",
-      });
-    }
-
-    const pageId = Number(idParam);
+    const pageId = Number(
+      req.params.id
+    );
 
     if (
       !pageId ||
@@ -386,7 +429,8 @@ export const getPaymentPageById = async (
     ) {
       return res.status(400).json({
         success: false,
-        message: "ID de page invalide.",
+        message:
+          "ID de page invalide.",
       });
     }
 
@@ -396,13 +440,19 @@ export const getPaymentPageById = async (
 
     const paymentPage =
       await prisma.paymentPage.findFirst({
+
         where: {
           id: pageId,
           userId,
         },
 
         include: {
-          product: true,
+
+          products: {
+            include: {
+              product: true,
+            },
+          },
 
           transactions: {
             orderBy: {
@@ -410,6 +460,7 @@ export const getPaymentPageById = async (
             },
           },
         },
+
       });
 
     if (!paymentPage) {
@@ -425,10 +476,15 @@ export const getPaymentPageById = async (
     // -------------------------------------------------
 
     return res.status(200).json({
+
       success: true,
+
       paymentPage,
+
     });
+
   } catch (error) {
+
     console.error(
       "GET PAYMENT PAGE ERROR:",
       error
@@ -455,6 +511,7 @@ export const activatePaymentPage = async (
   res: Response
 ) => {
   try {
+
     // -------------------------------------------------
     // UTILISATEUR
     // -------------------------------------------------
@@ -466,7 +523,8 @@ export const activatePaymentPage = async (
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "Utilisateur non authentifié.",
+        message:
+          "Utilisateur non authentifié.",
       });
     }
 
@@ -474,16 +532,9 @@ export const activatePaymentPage = async (
     // ID
     // -------------------------------------------------
 
-    const idParam = req.params.id;
-
-    if (typeof idParam !== "string") {
-      return res.status(400).json({
-        success: false,
-        message: "ID invalide.",
-      });
-    }
-
-    const pageId = Number(idParam);
+    const pageId = Number(
+      req.params.id
+    );
 
     if (
       !pageId ||
@@ -491,7 +542,8 @@ export const activatePaymentPage = async (
     ) {
       return res.status(400).json({
         success: false,
-        message: "ID de page invalide.",
+        message:
+          "ID de page invalide.",
       });
     }
 
@@ -501,14 +553,22 @@ export const activatePaymentPage = async (
 
     const paymentPage =
       await prisma.paymentPage.findFirst({
+
         where: {
           id: pageId,
           userId,
         },
 
         include: {
-          product: true,
+
+          products: {
+            include: {
+              product: true,
+            },
+          },
+
         },
+
       });
 
     if (!paymentPage) {
@@ -520,29 +580,65 @@ export const activatePaymentPage = async (
     }
 
     // -------------------------------------------------
-    // VÉRIFIER PRODUIT
+    // VÉRIFIER QU'IL Y A UN PRODUIT
     // -------------------------------------------------
 
     if (
-      paymentPage.product.status ===
-      "DISABLED"
+      !paymentPage.products ||
+      paymentPage.products.length === 0
     ) {
       return res.status(400).json({
         success: false,
         message:
-          "Impossible d'activer une page liée à un produit désactivé.",
+          "Cette page de paiement n'est associée à aucun produit.",
       });
     }
 
-    if (
-      paymentPage.product.status ===
-      "DRAFT"
+    // -------------------------------------------------
+    // VÉRIFIER LES PRODUITS
+    // -------------------------------------------------
+
+    for (
+      const pageProduct
+      of paymentPage.products
     ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Publiez d'abord le produit avant d'activer la page de paiement.",
-      });
+
+      const product =
+        pageProduct.product;
+
+      if (!product) {
+        continue;
+      }
+
+      // -----------------------------------------------
+      // PRODUIT DÉSACTIVÉ
+      // -----------------------------------------------
+
+      if (
+        product.status ===
+        "DISABLED"
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `Impossible d'activer la page : le produit "${product.name}" est désactivé.`,
+        });
+      }
+
+      // -----------------------------------------------
+      // PRODUIT EN BROUILLON
+      // -----------------------------------------------
+
+      if (
+        product.status ===
+        "DRAFT"
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `Publiez d'abord le produit "${product.name}" avant d'activer la page de paiement.`,
+        });
+      }
     }
 
     // -------------------------------------------------
@@ -551,6 +647,7 @@ export const activatePaymentPage = async (
 
     const updatedPage =
       await prisma.paymentPage.update({
+
         where: {
           id: pageId,
         },
@@ -560,8 +657,17 @@ export const activatePaymentPage = async (
         },
 
         include: {
-          product: true,
+
+          products: {
+            include: {
+              product: true,
+            },
+          },
+
+          transactions: true,
+
         },
+
       });
 
     // -------------------------------------------------
@@ -569,17 +675,22 @@ export const activatePaymentPage = async (
     // -------------------------------------------------
 
     return res.status(200).json({
+
       success: true,
 
       message:
         "Page de paiement activée avec succès.",
 
-      paymentPage: updatedPage,
+      paymentPage:
+        updatedPage,
 
       publicUrl:
         `/api/public/payment-pages/${updatedPage.slug}`,
+
     });
+
   } catch (error) {
+
     console.error(
       "ACTIVATE PAYMENT PAGE ERROR:",
       error
@@ -606,6 +717,7 @@ export const deactivatePaymentPage = async (
   res: Response
 ) => {
   try {
+
     // -------------------------------------------------
     // UTILISATEUR
     // -------------------------------------------------
@@ -617,7 +729,8 @@ export const deactivatePaymentPage = async (
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "Utilisateur non authentifié.",
+        message:
+          "Utilisateur non authentifié.",
       });
     }
 
@@ -625,16 +738,9 @@ export const deactivatePaymentPage = async (
     // ID
     // -------------------------------------------------
 
-    const idParam = req.params.id;
-
-    if (typeof idParam !== "string") {
-      return res.status(400).json({
-        success: false,
-        message: "ID invalide.",
-      });
-    }
-
-    const pageId = Number(idParam);
+    const pageId = Number(
+      req.params.id
+    );
 
     if (
       !pageId ||
@@ -642,7 +748,8 @@ export const deactivatePaymentPage = async (
     ) {
       return res.status(400).json({
         success: false,
-        message: "ID de page invalide.",
+        message:
+          "ID de page invalide.",
       });
     }
 
@@ -652,10 +759,12 @@ export const deactivatePaymentPage = async (
 
     const paymentPage =
       await prisma.paymentPage.findFirst({
+
         where: {
           id: pageId,
           userId,
         },
+
       });
 
     if (!paymentPage) {
@@ -672,6 +781,7 @@ export const deactivatePaymentPage = async (
 
     const updatedPage =
       await prisma.paymentPage.update({
+
         where: {
           id: pageId,
         },
@@ -681,8 +791,15 @@ export const deactivatePaymentPage = async (
         },
 
         include: {
-          product: true,
+
+          products: {
+            include: {
+              product: true,
+            },
+          },
+
         },
+
       });
 
     // -------------------------------------------------
@@ -690,14 +807,19 @@ export const deactivatePaymentPage = async (
     // -------------------------------------------------
 
     return res.status(200).json({
+
       success: true,
 
       message:
         "Page de paiement désactivée.",
 
-      paymentPage: updatedPage,
+      paymentPage:
+        updatedPage,
+
     });
+
   } catch (error) {
+
     console.error(
       "DEACTIVATE PAYMENT PAGE ERROR:",
       error
@@ -724,6 +846,7 @@ export const deletePaymentPage = async (
   res: Response
 ) => {
   try {
+
     // -------------------------------------------------
     // UTILISATEUR
     // -------------------------------------------------
@@ -735,7 +858,8 @@ export const deletePaymentPage = async (
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "Utilisateur non authentifié.",
+        message:
+          "Utilisateur non authentifié.",
       });
     }
 
@@ -743,16 +867,9 @@ export const deletePaymentPage = async (
     // ID
     // -------------------------------------------------
 
-    const idParam = req.params.id;
-
-    if (typeof idParam !== "string") {
-      return res.status(400).json({
-        success: false,
-        message: "ID invalide.",
-      });
-    }
-
-    const pageId = Number(idParam);
+    const pageId = Number(
+      req.params.id
+    );
 
     if (
       !pageId ||
@@ -760,7 +877,8 @@ export const deletePaymentPage = async (
     ) {
       return res.status(400).json({
         success: false,
-        message: "ID de page invalide.",
+        message:
+          "ID de page invalide.",
       });
     }
 
@@ -770,10 +888,12 @@ export const deletePaymentPage = async (
 
     const paymentPage =
       await prisma.paymentPage.findFirst({
+
         where: {
           id: pageId,
           userId,
         },
+
       });
 
     if (!paymentPage) {
@@ -804,7 +924,17 @@ export const deletePaymentPage = async (
     }
 
     // -------------------------------------------------
-    // SUPPRESSION
+    // SUPPRIMER LES ASSOCIATIONS PRODUITS
+    // -------------------------------------------------
+
+    await prisma.paymentPageProduct.deleteMany({
+      where: {
+        paymentPageId: pageId,
+      },
+    });
+
+    // -------------------------------------------------
+    // SUPPRIMER LA PAGE
     // -------------------------------------------------
 
     await prisma.paymentPage.delete({
@@ -818,12 +948,16 @@ export const deletePaymentPage = async (
     // -------------------------------------------------
 
     return res.status(200).json({
+
       success: true,
 
       message:
         "Page de paiement supprimée avec succès.",
+
     });
+
   } catch (error) {
+
     console.error(
       "DELETE PAYMENT PAGE ERROR:",
       error

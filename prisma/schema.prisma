@@ -213,18 +213,37 @@ model Company {
 // =====================================================
 // PLAN
 // =====================================================
-
 model Plan {
+
   id          Int      @id @default(autoincrement())
+
   name        String
+
   description String?
+
   priceUSD    Float
+
   priceCDF    Float
+
+
+  // Limite produits
+  // null = illimité
   maxProducts Int?
+
+
+  // Limite pages de paiement
+  // null = illimité
+  maxPaymentPages Int?
+
+
   features    Json?
+
+
   createdAt   DateTime @default(now())
 
+
   subscriptions Subscription[]
+
 }
 
 // =====================================================

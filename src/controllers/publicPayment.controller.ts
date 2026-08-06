@@ -9,13 +9,21 @@ const prisma = new PrismaClient();
 
 /**
  * =====================================================
+ * TYPES / HELPERS
+ * =====================================================
+ */
+
+const unavailableStatuses = ["DRAFT", "DISABLED"];
+
+/**
+ * =====================================================
  * GET PUBLIC PAYMENT PAGES
  * =====================================================
  *
  * GET /api/public/payment-pages
  *
- * Retourne uniquement les pages de paiement actives
- * et les produits disponibles.
+ * Retourne les pages actives avec leurs produits
+ * disponibles.
  *
  */
 export const getPublicPaymentPages = async (
@@ -27,24 +35,52 @@ export const getPublicPaymentPages = async (
       "================ PUBLIC PAYMENT PAGES ================"
     );
 
-    const allPaymentPages =
+    const paymentPages =
       await prisma.paymentPage.findMany({
         where: {
           active: true,
 
-          product: {
-            status: {
-              notIn: ["DRAFT", "DISABLED"],
+          products: {
+            some: {
+              status: {
+                notIn: unavailableStatuses as any,
+              },
             },
           },
         },
 
         include: {
-          product: {
+          products: {
+            where: {
+              status: {
+                notIn: unavailableStatuses as any,
+              },
+            },
+
             include: {
               fields: {
                 orderBy: {
                   id: "asc",
+                },
+              },
+
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  phone: true,
+
+                  company: {
+                    select: {
+                      id: true,
+                      name: true,
+                      logo: true,
+                      address: true,
+                      phone: true,
+                      email: true,
+                    },
+                  },
                 },
               },
             },
@@ -58,55 +94,100 @@ export const getPublicPaymentPages = async (
 
     console.log(
       "Pages publiques disponibles :",
-      allPaymentPages.length
+      paymentPages.length
     );
 
     return res.status(200).json({
       success: true,
 
-      paymentPages: allPaymentPages.map(
-        (page) => ({
-          paymentPage: {
-            id: page.id,
-            title: page.title,
-            slug: page.slug,
-            description: page.description,
-            active: page.active,
-            createdAt: page.createdAt,
-          },
+      paymentPages: paymentPages.map(
+        (page) => {
+          /**
+           * Une PaymentPage peut avoir plusieurs produits.
+           *
+           * Pour cette réponse publique, on prend
+           * le premier produit disponible.
+           */
+          const product =
+            page.products?.[0] ?? null;
 
-          product: page.product
-            ? {
-                id: page.product.id,
-                name: page.product.name,
-                subtitle: page.product.subtitle,
-                description: page.product.description,
-                type: page.product.type,
-                price: page.product.price,
-                currency: page.product.currency,
-                imageUrl: page.product.imageUrl,
-                status: page.product.status,
-                createdAt: page.product.createdAt,
+          return {
+            paymentPage: {
+              id: page.id,
+              title: page.title,
+              slug: page.slug,
+              description: page.description,
+              active: page.active,
+              createdAt: page.createdAt,
+            },
 
-                // IMPORTANT :
-                // Les champs appartiennent uniquement
-                // à ce produit.
-                fields: page.product.fields.map(
-                  (field) => ({
-                    id: field.id,
-                    name: field.name,
-                    label: field.label,
-                    type: field.type,
-                    required: field.required,
-                    value: field.value,
-                  })
-                ),
-              }
-            : null,
-        })
+            product: product
+              ? {
+                  id: product.id,
+                  name: product.name,
+                  subtitle: product.subtitle,
+                  description: product.description,
+                  type: product.type,
+                  price: product.price,
+                  currency: product.currency,
+                  imageUrl: product.imageUrl,
+                  status: product.status,
+                  createdAt: product.createdAt,
+
+                  fields:
+                    product.fields.map(
+                      (field) => ({
+                        id: field.id,
+                        name: field.name,
+                        label: field.label,
+                        type: field.type,
+                        required:
+                          field.required,
+                        value: field.value,
+                      })
+                    ),
+                }
+              : null,
+
+            instructor:
+              product?.user
+                ? {
+                    id: product.user.id,
+                    name: product.user.name,
+                    email:
+                      product.user.email,
+                    phone:
+                      product.user.phone,
+                  }
+                : null,
+
+            company:
+              product?.user?.company
+                ? {
+                    id:
+                      product.user.company
+                        .id,
+                    name:
+                      product.user.company
+                        .name,
+                    logo:
+                      product.user.company
+                        .logo,
+                    address:
+                      product.user.company
+                        .address,
+                    phone:
+                      product.user.company
+                        .phone,
+                    email:
+                      product.user.company
+                        .email,
+                  }
+                : null,
+          };
+        }
       ),
     });
-
   } catch (error) {
     console.error(
       "GET PUBLIC PAYMENT PAGES ERROR:",
@@ -115,12 +196,12 @@ export const getPublicPaymentPages = async (
 
     return res.status(500).json({
       success: false,
+
       message:
-        "Impossible de récupérer les produits disponibles.",
+        "Impossible de récupérer les pages de paiement publiques.",
     });
   }
 };
-
 
 /**
  * =====================================================
@@ -131,7 +212,7 @@ export const getPublicPaymentPages = async (
  *
  * Exemple :
  *
- * /api/public/payment-pages/formation
+ * /api/public/payment-pages/formation-web
  *
  */
 export const getPublicPaymentPage = async (
@@ -145,23 +226,18 @@ export const getPublicPaymentPage = async (
 
     const slugParam = req.params.slug;
 
-    if (typeof slugParam !== "string") {
+    if (
+      typeof slugParam !== "string" ||
+      !slugParam.trim()
+    ) {
       return res.status(400).json({
         success: false,
         message:
-          "Slug de la page de paiement invalide.",
+          "Le slug de la page de paiement est invalide.",
       });
     }
 
     const slug = slugParam.trim();
-
-    if (!slug) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Le slug est obligatoire.",
-      });
-    }
 
     console.log(
       "Recherche de la page publique :",
@@ -171,6 +247,13 @@ export const getPublicPaymentPage = async (
     // =================================================
     // RECHERCHER LA PAGE
     // =================================================
+    //
+    // IMPORTANT :
+    //
+    // PaymentPage possède "products"
+    // et NON "product".
+    //
+    // =================================================
 
     const paymentPage =
       await prisma.paymentPage.findUnique({
@@ -179,21 +262,20 @@ export const getPublicPaymentPage = async (
         },
 
         include: {
-          product: {
-            include: {
-              // =======================================
-              // UNIQUEMENT LES CHAMPS DE CE PRODUIT
-              // =======================================
+          products: {
+            where: {
+              status: {
+                notIn:
+                  unavailableStatuses as any,
+              },
+            },
 
+            include: {
               fields: {
                 orderBy: {
                   id: "asc",
                 },
               },
-
-              // =======================================
-              // FORMATEUR
-              // =======================================
 
               user: {
                 select: {
@@ -224,6 +306,11 @@ export const getPublicPaymentPage = async (
     // =================================================
 
     if (!paymentPage) {
+      console.log(
+        "Page introuvable :",
+        slug
+      );
+
       return res.status(404).json({
         success: false,
         message:
@@ -236,6 +323,11 @@ export const getPublicPaymentPage = async (
     // =================================================
 
     if (!paymentPage.active) {
+      console.log(
+        "Page inactive :",
+        slug
+      );
+
       return res.status(404).json({
         success: false,
         message:
@@ -246,20 +338,31 @@ export const getPublicPaymentPage = async (
     // =================================================
     // PRODUIT
     // =================================================
+    //
+    // PaymentPage -> products[]
+    //
+    // On récupère le premier produit disponible.
+    //
+    // =================================================
 
     const product =
-      paymentPage.product;
+      paymentPage.products?.[0] ?? null;
 
     if (!product) {
+      console.log(
+        "Aucun produit disponible pour la page :",
+        slug
+      );
+
       return res.status(404).json({
         success: false,
         message:
-          "Produit associé introuvable.",
+          "Aucun produit disponible pour cette page de paiement.",
       });
     }
 
     // =================================================
-    // PRODUIT NON DISPONIBLE
+    // SÉCURITÉ SUPPLÉMENTAIRE
     // =================================================
 
     if (
@@ -274,14 +377,20 @@ export const getPublicPaymentPage = async (
     }
 
     // =================================================
-    // CHAMPS DU PRODUIT
+    // CHAMPS
     // =================================================
 
-    const fields = product.fields || [];
+    const fields =
+      product.fields ?? [];
 
     console.log(
       "Produit :",
       product.name
+    );
+
+    console.log(
+      "Produit ID :",
+      product.id
     );
 
     console.log(
@@ -299,17 +408,17 @@ export const getPublicPaymentPage = async (
     // =================================================
 
     const instructor =
-      product.user;
+      product.user ?? null;
 
     // =================================================
-    // ENTREPRISE / ÉCOLE
+    // ENTREPRISE
     // =================================================
 
     const company =
-      instructor?.company || null;
+      instructor?.company ?? null;
 
     // =================================================
-    // RÉPONSE PUBLIQUE
+    // RÉPONSE
     // =================================================
 
     return res.status(200).json({
@@ -323,9 +432,11 @@ export const getPublicPaymentPage = async (
         id: paymentPage.id,
         title: paymentPage.title,
         slug: paymentPage.slug,
-        description: paymentPage.description,
+        description:
+          paymentPage.description,
         active: paymentPage.active,
-        createdAt: paymentPage.createdAt,
+        createdAt:
+          paymentPage.createdAt,
       },
 
       // =================================================
@@ -334,24 +445,30 @@ export const getPublicPaymentPage = async (
 
       product: {
         id: product.id,
+
         name: product.name,
-        subtitle: product.subtitle,
-        description: product.description,
+
+        subtitle:
+          product.subtitle,
+
+        description:
+          product.description,
 
         type: product.type,
 
         price: product.price,
-        currency: product.currency,
 
-        imageUrl: product.imageUrl,
+        currency:
+          product.currency,
 
-        status: product.status,
+        imageUrl:
+          product.imageUrl,
 
-        createdAt: product.createdAt,
+        status:
+          product.status,
 
-        // =================================================
-        // CHAMPS PROPRES À CE PRODUIT
-        // =================================================
+        createdAt:
+          product.createdAt,
 
         fields: fields.map(
           (field) => ({
@@ -363,9 +480,11 @@ export const getPublicPaymentPage = async (
 
             type: field.type,
 
-            required: field.required,
+            required:
+              field.required,
 
-            value: field.value,
+            value:
+              field.value,
           })
         ),
       },
@@ -377,35 +496,49 @@ export const getPublicPaymentPage = async (
       instructor: instructor
         ? {
             id: instructor.id,
+
             name: instructor.name,
-            email: instructor.email,
-            phone: instructor.phone,
+
+            email:
+              instructor.email,
+
+            phone:
+              instructor.phone,
           }
         : null,
 
       // =================================================
-      // ÉTABLISSEMENT / ÉCOLE
+      // ENTREPRISE
       // =================================================
 
       company: company
         ? {
             id: company.id,
-            name: company.name,
-            logo: company.logo,
-            address: company.address,
-            phone: company.phone,
-            email: company.email,
+
+            name:
+              company.name,
+
+            logo:
+              company.logo,
+
+            address:
+              company.address,
+
+            phone:
+              company.phone,
+
+            email:
+              company.email,
           }
         : null,
 
       // =================================================
-      // INDICATEUR IMPORTANT
+      // CHAMPS
       // =================================================
 
       requiresFields:
         fields.length > 0,
     });
-
   } catch (error: any) {
     console.error(
       "GET PUBLIC PAYMENT PAGE ERROR:",
@@ -419,7 +552,8 @@ export const getPublicPaymentPage = async (
         "Impossible de récupérer la page de paiement.",
 
       error:
-        process.env.NODE_ENV !== "production"
+        process.env.NODE_ENV !==
+        "production"
           ? error?.message
           : undefined,
     });
