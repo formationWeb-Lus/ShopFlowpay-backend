@@ -1,34 +1,37 @@
+import { Request, Response } from "express";
 import {
-  Request,
-  Response as ExpressResponse,
-} from "express";
+ PrismaClient,
+ ProductStatus,
+ PaymentStatus,
+} from "@prisma/client";
 
-import { PrismaClient } from "@prisma/client";
+import {
+  processSerdiPayPayment
+} from "../services/serdipay.service";
 
 const prisma = new PrismaClient();
 
-/**
- * =====================================================
- * TYPES / HELPERS
- * =====================================================
- */
+/* =====================================================
+   HELPERS
+===================================================== */
 
-const unavailableStatuses = ["DRAFT", "DISABLED"];
+const AVAILABLE_STATUS: ProductStatus =
+  ProductStatus.PUBLISHED;
 
-/**
- * =====================================================
- * GET PUBLIC PAYMENT PAGES
- * =====================================================
- *
- * GET /api/public/payment-pages
- *
- * Retourne les pages actives avec leurs produits
- * disponibles.
- *
- */
+/* =====================================================
+   GET PUBLIC PAYMENT PAGES
+=====================================================
+
+GET /api/public/payment-pages
+
+Retourne toutes les pages publiques actives
+avec leurs produits publiés.
+
+===================================================== */
+
 export const getPublicPaymentPages = async (
   req: Request,
-  res: ExpressResponse
+  res: Response
 ) => {
   try {
     console.log(
@@ -39,46 +42,36 @@ export const getPublicPaymentPages = async (
       await prisma.paymentPage.findMany({
         where: {
           active: true,
-
-          products: {
-            some: {
-              status: {
-                notIn: unavailableStatuses as any,
-              },
-            },
-          },
         },
 
         include: {
           products: {
-            where: {
-              status: {
-                notIn: unavailableStatuses as any,
-              },
-            },
-
             include: {
-              fields: {
-                orderBy: {
-                  id: "asc",
-                },
-              },
+              product: {
+                include: {
+                  fields: {
+                    orderBy: {
+                      id: "asc",
+                    },
+                  },
 
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  phone: true,
-
-                  company: {
+                  user: {
                     select: {
                       id: true,
                       name: true,
-                      logo: true,
-                      address: true,
-                      phone: true,
                       email: true,
+                      phone: true,
+
+                      company: {
+                        select: {
+                          id: true,
+                          name: true,
+                          logo: true,
+                          address: true,
+                          phone: true,
+                          email: true,
+                        },
+                      },
                     },
                   },
                 },
@@ -92,101 +85,160 @@ export const getPublicPaymentPages = async (
         },
       });
 
+    const pages = paymentPages
+      .map((page) => {
+        const products = page.products
+          .map((item) => item.product)
+          .filter(
+            (product) =>
+              product.status ===
+              AVAILABLE_STATUS
+          );
+
+        if (products.length === 0) {
+          return null;
+        }
+
+        return {
+          id: page.id,
+
+          title: page.title,
+
+          slug: page.slug,
+
+          description:
+            page.description,
+
+          active: page.active,
+
+          createdAt:
+            page.createdAt,
+
+          totalProducts:
+            products.length,
+
+          products: products.map(
+            (product) => ({
+              id: product.id,
+
+              name: product.name,
+
+              subtitle:
+                product.subtitle,
+
+              description:
+                product.description,
+
+              type: product.type,
+
+              price:
+                product.price,
+
+              currency:
+                product.currency,
+
+              imageUrl:
+                product.imageUrl,
+
+              status:
+                product.status,
+
+              createdAt:
+                product.createdAt,
+
+              paymentUrl:
+                `/p/${page.slug}?product=${product.id}`,
+
+              fields:
+                product.fields.map(
+                  (field) => ({
+                    id: field.id,
+
+                    name:
+                      field.name,
+
+                    label:
+                      field.label,
+
+                    type:
+                      field.type,
+
+                    required:
+                      field.required,
+
+                    value:
+                      field.value,
+                  })
+                ),
+
+              instructor: {
+                id: product.user.id,
+
+                name:
+                  product.user.name,
+
+                email:
+                  product.user.email,
+
+                phone:
+                  product.user.phone,
+              },
+
+              company:
+                product.user.company
+                  ? {
+                      id:
+                        product
+                          .user
+                          .company.id,
+
+                      name:
+                        product
+                          .user
+                          .company
+                          .name,
+
+                      logo:
+                        product
+                          .user
+                          .company
+                          .logo,
+
+                      address:
+                        product
+                          .user
+                          .company
+                          .address,
+
+                      phone:
+                        product
+                          .user
+                          .company
+                          .phone,
+
+                      email:
+                        product
+                          .user
+                          .company
+                          .email,
+                    }
+                  : null,
+            })
+          ),
+        };
+      })
+      .filter(Boolean);
+
     console.log(
-      "Pages publiques disponibles :",
-      paymentPages.length
+      `Pages publiques : ${pages.length}`
     );
 
     return res.status(200).json({
       success: true,
 
-      paymentPages: paymentPages.map(
-        (page) => {
-          /**
-           * Une PaymentPage peut avoir plusieurs produits.
-           *
-           * Pour cette réponse publique, on prend
-           * le premier produit disponible.
-           */
-          const product =
-            page.products?.[0] ?? null;
+      total: pages.length,
 
-          return {
-            paymentPage: {
-              id: page.id,
-              title: page.title,
-              slug: page.slug,
-              description: page.description,
-              active: page.active,
-              createdAt: page.createdAt,
-            },
-
-            product: product
-              ? {
-                  id: product.id,
-                  name: product.name,
-                  subtitle: product.subtitle,
-                  description: product.description,
-                  type: product.type,
-                  price: product.price,
-                  currency: product.currency,
-                  imageUrl: product.imageUrl,
-                  status: product.status,
-                  createdAt: product.createdAt,
-
-                  fields:
-                    product.fields.map(
-                      (field) => ({
-                        id: field.id,
-                        name: field.name,
-                        label: field.label,
-                        type: field.type,
-                        required:
-                          field.required,
-                        value: field.value,
-                      })
-                    ),
-                }
-              : null,
-
-            instructor:
-              product?.user
-                ? {
-                    id: product.user.id,
-                    name: product.user.name,
-                    email:
-                      product.user.email,
-                    phone:
-                      product.user.phone,
-                  }
-                : null,
-
-            company:
-              product?.user?.company
-                ? {
-                    id:
-                      product.user.company
-                        .id,
-                    name:
-                      product.user.company
-                        .name,
-                    logo:
-                      product.user.company
-                        .logo,
-                    address:
-                      product.user.company
-                        .address,
-                    phone:
-                      product.user.company
-                        .phone,
-                    email:
-                      product.user.company
-                        .email,
-                  }
-                : null,
-          };
-        }
-      ),
+      paymentPages: pages,
     });
   } catch (error) {
     console.error(
@@ -198,100 +250,351 @@ export const getPublicPaymentPages = async (
       success: false,
 
       message:
-        "Impossible de récupérer les pages de paiement publiques.",
+        "Impossible de récupérer les pages publiques.",
     });
   }
 };
 
-/**
- * =====================================================
- * GET PUBLIC PAYMENT PAGE
- * =====================================================
- *
- * GET /api/public/payment-pages/:slug
- *
- * Exemple :
- *
- * /api/public/payment-pages/formation-web
- *
- */
-export const getPublicPaymentPage = async (
-  req: Request,
-  res: ExpressResponse
-) => {
-  try {
-    // =================================================
-    // SLUG
-    // =================================================
 
-    const slugParam = req.params.slug;
+// =====================================================
+// CREATE PUBLIC PAYMENT
+// POST /api/public/payments
+// =====================================================
+
+export const createPublicPayment = async (
+  req: Request,
+  res: Response
+) => {
+
+  try {
+
+   const {
+  productId,
+  phone,
+  telecom,
+  currency,
+  amount,
+  customer: customerInfo,
+  fields,
+} = req.body;
+
+
+const name =
+  customerInfo?.name || "Client";
+
+
+const email =
+  customerInfo?.email || null;
+
+    // =============================================
+    // VALIDATION
+    // =============================================
 
     if (
-      typeof slugParam !== "string" ||
-      !slugParam.trim()
+      !productId ||
+      !phone ||
+      !telecom ||
+      !currency ||
+      !amount
+    ) {
+
+      return res.status(400).json({
+        success:false,
+        message:
+          "Informations de paiement manquantes."
+      });
+
+    }
+
+
+
+    // =============================================
+    // PRODUIT
+    // =============================================
+
+    const product =
+      await prisma.product.findUnique({
+
+        where:{
+          id:Number(productId)
+        },
+
+        include:{
+          user:true
+        }
+
+      });
+
+
+
+    if(!product){
+
+      return res.status(404).json({
+        success:false,
+        message:
+          "Produit introuvable."
+      });
+
+    }
+
+
+
+    if(
+      product.status !== ProductStatus.PUBLISHED
+    ){
+
+      return res.status(400).json({
+        success:false,
+        message:
+          "Ce produit n'est pas disponible."
+      });
+
+    }
+
+
+
+    // =============================================
+    // CUSTOMER
+    // =============================================
+
+    let customer =
+      await prisma.customer.findFirst({
+
+        where:{
+          phone
+        }
+
+      });
+
+
+
+    if(!customer){
+
+      customer =
+        await prisma.customer.create({
+
+          data:{
+
+            userId:
+              product.userId,
+
+            name:
+              name || "Client",
+
+            email,
+
+            phone
+
+          }
+
+        });
+
+    }
+
+
+
+    // =============================================
+    // CREATION PAYMENT PENDING
+    // =============================================
+
+    const payment =
+      await prisma.payment.create({
+
+        data:{
+
+          userId:
+            product.userId,
+
+          customerId:
+            customer.id,
+
+          amount:
+            Number(amount),
+
+          currency,
+
+          telecom,
+
+          phone,
+
+         status:
+  PaymentStatus.PENDING
+
+        }
+
+      });
+
+
+
+    // =============================================
+    // SERDIPAY
+    // =============================================
+
+    const serdiResult =
+      await processSerdiPayPayment({
+
+        api_id:
+          process.env.SERDIPAY_API_ID!,
+
+        api_password:
+          process.env.SERDIPAY_API_PASSWORD!,
+
+        merchantCode:
+          process.env.SERDIPAY_MERCHANT_CODE!,
+
+        merchant_pin:
+          process.env.SERDIPAY_MERCHANT_PIN!,
+
+        clientPhone:
+          phone,
+
+        amount:
+          Number(amount),
+
+        currency,
+
+        telecom
+
+      });
+
+
+      // =============================================
+// UPDATE PAYMENT
+// =============================================
+
+let finalStatus: PaymentStatus =
+  PaymentStatus.PENDING;
+
+
+if (
+  serdiResult.status === "success"
+) {
+
+  finalStatus =
+    PaymentStatus.SUCCESS;
+
+}
+
+
+if (
+  serdiResult.status === "failed"
+) {
+
+  finalStatus =
+    PaymentStatus.FAILED;
+
+}
+
+
+
+await prisma.payment.update({
+
+  where: {
+    id: payment.id,
+  },
+
+  data: {
+
+    sessionId:
+      serdiResult.sessionId,
+
+    transactionId:
+      serdiResult.transactionId,
+
+    status:
+      finalStatus,
+
+  }
+
+});
+
+
+
+  } catch(error:any){
+
+
+    console.error(
+      "CREATE PUBLIC PAYMENT ERROR:",
+      error
+    );
+
+
+    return res.status(500).json({
+
+      success:false,
+
+      message:
+        "Erreur pendant le paiement.",
+
+      error:
+        process.env.NODE_ENV !== "production"
+        ? error.message
+        : undefined
+
+    });
+
+  }
+
+};
+
+
+export const getPublicPaymentPage = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { slug } = req.params;
+
+    if (
+      typeof slug !== "string" ||
+      !slug.trim()
     ) {
       return res.status(400).json({
         success: false,
-        message:
-          "Le slug de la page de paiement est invalide.",
+        message: "Le slug est obligatoire.",
       });
     }
 
-    const slug = slugParam.trim();
+    const cleanSlug = slug.trim();
 
     console.log(
-      "Recherche de la page publique :",
-      slug
+      `Recherche de la page publique : ${cleanSlug}`
     );
-
-    // =================================================
-    // RECHERCHER LA PAGE
-    // =================================================
-    //
-    // IMPORTANT :
-    //
-    // PaymentPage possède "products"
-    // et NON "product".
-    //
-    // =================================================
 
     const paymentPage =
       await prisma.paymentPage.findUnique({
         where: {
-          slug,
+          slug: cleanSlug,
         },
 
         include: {
           products: {
-            where: {
-              status: {
-                notIn:
-                  unavailableStatuses as any,
-              },
-            },
-
             include: {
-              fields: {
-                orderBy: {
-                  id: "asc",
-                },
-              },
+              product: {
+                include: {
+                  fields: {
+                    orderBy: {
+                      id: "asc",
+                    },
+                  },
 
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  phone: true,
-
-                  company: {
+                  user: {
                     select: {
                       id: true,
                       name: true,
-                      logo: true,
-                      address: true,
-                      phone: true,
                       email: true,
+                      phone: true,
+
+                      company: {
+                        select: {
+                          id: true,
+                          name: true,
+                          logo: true,
+                          address: true,
+                          phone: true,
+                          email: true,
+                        },
+                      },
                     },
                   },
                 },
@@ -301,155 +604,60 @@ export const getPublicPaymentPage = async (
         },
       });
 
-    // =================================================
+    // =====================================================
     // PAGE INTROUVABLE
-    // =================================================
+    // =====================================================
 
     if (!paymentPage) {
-      console.log(
-        "Page introuvable :",
-        slug
-      );
-
       return res.status(404).json({
         success: false,
-        message:
-          "Page de paiement introuvable.",
+        message: "Page publique introuvable.",
       });
     }
 
-    // =================================================
-    // PAGE INACTIVE
-    // =================================================
+    // =====================================================
+    // PAGE DÉSACTIVÉE
+    // =====================================================
 
     if (!paymentPage.active) {
-      console.log(
-        "Page inactive :",
-        slug
+      return res.status(404).json({
+        success: false,
+        message:
+          "Cette page publique n'est plus disponible.",
+      });
+    }
+
+    // =====================================================
+    // PRODUITS DISPONIBLES
+    // =====================================================
+
+    const products = paymentPage.products
+      .map((item) => item.product)
+      .filter(
+        (product) =>
+          product.status ===
+          ProductStatus.PUBLISHED
       );
 
+    if (products.length === 0) {
       return res.status(404).json({
         success: false,
         message:
-          "Cette page de paiement n'est plus disponible.",
+          "Aucun produit publié sur cette page.",
       });
     }
 
-    // =================================================
-    // PRODUIT
-    // =================================================
-    //
-    // PaymentPage -> products[]
-    //
-    // On récupère le premier produit disponible.
-    //
-    // =================================================
+    // =====================================================
+    // FORMAT
+    // =====================================================
 
-    const product =
-      paymentPage.products?.[0] ?? null;
-
-    if (!product) {
-      console.log(
-        "Aucun produit disponible pour la page :",
-        slug
-      );
-
-      return res.status(404).json({
-        success: false,
-        message:
-          "Aucun produit disponible pour cette page de paiement.",
-      });
-    }
-
-    // =================================================
-    // SÉCURITÉ SUPPLÉMENTAIRE
-    // =================================================
-
-    if (
-      product.status === "DISABLED" ||
-      product.status === "DRAFT"
-    ) {
-      return res.status(404).json({
-        success: false,
-        message:
-          "Ce produit n'est pas disponible à la vente.",
-      });
-    }
-
-    // =================================================
-    // CHAMPS
-    // =================================================
-
-    const fields =
-      product.fields ?? [];
-
-    console.log(
-      "Produit :",
-      product.name
-    );
-
-    console.log(
-      "Produit ID :",
-      product.id
-    );
-
-    console.log(
-      "Type :",
-      product.type
-    );
-
-    console.log(
-      "Nombre de champs :",
-      fields.length
-    );
-
-    // =================================================
-    // FORMATEUR
-    // =================================================
-
-    const instructor =
-      product.user ?? null;
-
-    // =================================================
-    // ENTREPRISE
-    // =================================================
-
-    const company =
-      instructor?.company ?? null;
-
-    // =================================================
-    // RÉPONSE
-    // =================================================
-
-    return res.status(200).json({
-      success: true,
-
-      // =================================================
-      // PAYMENT PAGE
-      // =================================================
-
-      paymentPage: {
-        id: paymentPage.id,
-        title: paymentPage.title,
-        slug: paymentPage.slug,
-        description:
-          paymentPage.description,
-        active: paymentPage.active,
-        createdAt:
-          paymentPage.createdAt,
-      },
-
-      // =================================================
-      // PRODUIT
-      // =================================================
-
-      product: {
+    const formattedProducts = products.map(
+      (product) => ({
         id: product.id,
 
         name: product.name,
 
-        subtitle:
-          product.subtitle,
+        subtitle: product.subtitle,
 
         description:
           product.description,
@@ -470,7 +678,10 @@ export const getPublicPaymentPage = async (
         createdAt:
           product.createdAt,
 
-        fields: fields.map(
+        paymentUrl:
+          `/p/${paymentPage.slug}?product=${product.id}`,
+
+        fields: product.fields.map(
           (field) => ({
             id: field.id,
 
@@ -487,57 +698,69 @@ export const getPublicPaymentPage = async (
               field.value,
           })
         ),
+
+        instructor: {
+          id: product.user.id,
+
+          name:
+            product.user.name,
+
+          email:
+            product.user.email,
+
+          phone:
+            product.user.phone,
+        },
+
+        company:
+          product.user.company
+            ? {
+                id:
+                  product.user.company.id,
+
+                name:
+                  product.user.company.name,
+
+                logo:
+                  product.user.company.logo,
+
+                address:
+                  product.user.company.address,
+
+                phone:
+                  product.user.company.phone,
+
+                email:
+                  product.user.company.email,
+              }
+            : null,
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+
+      paymentPage: {
+        id: paymentPage.id,
+
+        title: paymentPage.title,
+
+        slug: paymentPage.slug,
+
+        description:
+          paymentPage.description,
+
+        active: paymentPage.active,
+
+        createdAt:
+          paymentPage.createdAt,
       },
 
-      // =================================================
-      // FORMATEUR
-      // =================================================
+      totalProducts:
+        formattedProducts.length,
 
-      instructor: instructor
-        ? {
-            id: instructor.id,
-
-            name: instructor.name,
-
-            email:
-              instructor.email,
-
-            phone:
-              instructor.phone,
-          }
-        : null,
-
-      // =================================================
-      // ENTREPRISE
-      // =================================================
-
-      company: company
-        ? {
-            id: company.id,
-
-            name:
-              company.name,
-
-            logo:
-              company.logo,
-
-            address:
-              company.address,
-
-            phone:
-              company.phone,
-
-            email:
-              company.email,
-          }
-        : null,
-
-      // =================================================
-      // CHAMPS
-      // =================================================
-
-      requiresFields:
-        fields.length > 0,
+      products:
+        formattedProducts,
     });
   } catch (error: any) {
     console.error(
@@ -549,12 +772,12 @@ export const getPublicPaymentPage = async (
       success: false,
 
       message:
-        "Impossible de récupérer la page de paiement.",
+        "Impossible de récupérer la page publique.",
 
       error:
         process.env.NODE_ENV !==
         "production"
-          ? error?.message
+          ? error.message
           : undefined,
     });
   }

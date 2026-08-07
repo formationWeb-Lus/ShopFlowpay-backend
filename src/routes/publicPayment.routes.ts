@@ -4,6 +4,7 @@ import { Router } from "express";
 import {
   getPublicPaymentPages,
   getPublicPaymentPage,
+  createPublicPayment,
 } from "../controllers/publicPayment.controller";
 
 const router = Router();
@@ -22,6 +23,9 @@ router.get(
   "/payment-pages",
   getPublicPaymentPages
 );
+
+router.post("/payments", createPublicPayment);
+
 
 /**
  * =====================================================

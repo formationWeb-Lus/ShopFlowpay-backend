@@ -202,7 +202,7 @@ export const createPaymentPage = async (
               ? String(description).trim()
               : product.description,
 
-          active: false,
+          active: true,
 
           // -------------------------------------------
           // ASSOCIATION DU PRODUIT
