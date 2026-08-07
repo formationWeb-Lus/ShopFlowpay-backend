@@ -1,6 +1,9 @@
 
 import { Request, Response } from "express";
-import { PrismaClient, ProductStatus } from "@prisma/client";
+import {
+  PrismaClient,
+  ProductStatus,
+} from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -10,14 +13,21 @@ const prisma = new PrismaClient();
    GET /api/public/payment-pages/:slug
 
    Exemple :
-   /api/public/payment-pages/coderise-formations
+   /api/public/payment-pages/formation-web
 
-   Retourne :
+   Structure :
+
    PaymentPage
-      ↓
-   Products
-      ↓
-   lien public de chaque produit
+        ↓
+   PaymentPageProduct
+        ↓
+      Product
+        ↓
+       User
+        ↓
+     Company
+
+   Cette route retourne UN SEUL produit publié.
 ===================================================== */
 
 export const getPublicPaymentPage = async (
@@ -55,7 +65,17 @@ export const getPublicPaymentPage = async (
             },
 
             include: {
-              product: true,
+              product: {
+                include: {
+                  fields: true,
+
+                  user: {
+                    include: {
+                      company: true,
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -85,69 +105,139 @@ export const getPublicPaymentPage = async (
     }
 
     /* =================================================
-       5. RECUPERER UNIQUEMENT LES PRODUITS PUBLIES
+       5. TROUVER LE PREMIER PRODUIT PUBLIE
     ================================================= */
 
-    const formattedProducts =
-      paymentPage.products
-        .map((item) => item.product)
-
-        .filter(
-          (product) =>
-            product !== null &&
-            product.status === ProductStatus.PUBLISHED
-        )
-
-        .map((product) => ({
-          id: product.id,
-
-          name: product.name,
-
-          subtitle: product.subtitle,
-
-          description: product.description,
-
-          type: product.type,
-
-          price: product.price,
-
-          currency: product.currency,
-
-          imageUrl: product.imageUrl,
-
-          status: product.status,
-
-          /* ==========================================
-             LIEN PUBLIC DU PRODUIT
-             
-             Exemple :
-             /p/coderise-formations?product=7
-          ========================================== */
-
-          paymentUrl:
-            `/p/${paymentPage.slug}?product=${product.id}`,
-        }));
+    const paymentPageProduct =
+      paymentPage.products.find(
+        (item) =>
+          item.product &&
+          item.product.status ===
+            ProductStatus.PUBLISHED
+      );
 
     /* =================================================
-       6. REPONSE
+       6. AUCUN PRODUIT PUBLIE
+    ================================================= */
+
+    if (!paymentPageProduct) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Aucun produit publié n'est associé à cette page.",
+      });
+    }
+
+    const product =
+      paymentPageProduct.product;
+
+    /* =================================================
+       7. INSTRUCTEUR
+
+       Dans ton schema :
+       Product → User
+
+       On utilise donc le propriétaire du produit
+       comme instructeur.
+    ================================================= */
+
+    const instructor =
+      product.user
+        ? {
+            id: product.user.id,
+            name: product.user.name,
+            email: product.user.email,
+            phone: product.user.phone,
+          }
+        : null;
+
+    /* =================================================
+       8. ENTREPRISE
+
+       Dans ton schema :
+       Product → User → Company
+    ================================================= */
+
+    const company =
+      product.user?.company
+        ? {
+            id: product.user.company.id,
+            name: product.user.company.name,
+            logo: product.user.company.logo,
+            address: product.user.company.address,
+            phone: product.user.company.phone,
+            email: product.user.company.email,
+          }
+        : null;
+
+    /* =================================================
+       9. REPONSE
     ================================================= */
 
     return res.status(200).json({
       success: true,
 
-      page: {
+      /* ===============================================
+         PAYMENT PAGE
+      =============================================== */
+
+      paymentPage: {
         id: paymentPage.id,
-
         title: paymentPage.title,
-
         slug: paymentPage.slug,
-
         description: paymentPage.description,
-
-        products: formattedProducts,
-
-        totalProducts: formattedProducts.length,
+        active: paymentPage.active,
+        createdAt: paymentPage.createdAt,
       },
+
+      /* ===============================================
+         PRODUIT
+      =============================================== */
+
+      product: {
+        id: product.id,
+        userId: product.userId,
+
+        name: product.name,
+        subtitle: product.subtitle,
+        description: product.description,
+
+        type: product.type,
+
+        price: product.price,
+        currency: product.currency,
+
+        imageUrl: product.imageUrl,
+
+        status: product.status,
+
+        createdAt: product.createdAt,
+
+        /* ============================================
+           LIEN PUBLIC
+        ============================================ */
+
+        paymentUrl:
+          `/p/${paymentPage.slug}?product=${product.id}`,
+
+        /* ============================================
+           CHAMPS PERSONNALISES
+        ============================================ */
+
+        fields: product.fields ?? [],
+      },
+
+      /* ===============================================
+         INSTRUCTEUR
+      =============================================== */
+
+      instructor,
+
+      /* ===============================================
+         ENTREPRISE
+      =============================================== */
+
+      company,
     });
   } catch (error) {
     console.error(

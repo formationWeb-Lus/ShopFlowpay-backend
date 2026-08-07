@@ -824,12 +824,25 @@ export const deleteProduct = async (
        DELETE
     ----------------------------------------------------- */
 
-    await prisma.product.delete({
-      where: {
-        id: productId,
-      },
-    });
+    await prisma.$transaction([
+  prisma.productPaymentConfig.deleteMany({
+    where:{
+      productId
+    }
+  }),
 
+  prisma.paymentPageProduct.deleteMany({
+    where:{
+      productId
+    }
+  }),
+
+  prisma.product.delete({
+    where:{
+      id: productId
+    }
+  })
+]);
     /* -----------------------------------------------------
        RESPONSE
     ----------------------------------------------------- */

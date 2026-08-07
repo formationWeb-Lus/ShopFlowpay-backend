@@ -28,24 +28,40 @@ export const getPublicProducts = async (
         },
 
         select: {
-          id: true,
-          name: true,
-          subtitle: true,
-          description: true,
-          type: true,
-          price: true,
-          currency: true,
-          imageUrl: true,
-          status: true,
-          createdAt: true,
+  id: true,
+  name: true,
+  subtitle: true,
+  description: true,
+  type: true,
+  price: true,
+  currency: true,
+  imageUrl: true,
+  status: true,
+  createdAt: true,
 
-          user: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
+  user: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+
+  paymentPageProducts: {
+    where: {
+      paymentPage: {
+        active: true,
+      },
+    },
+
+    select: {
+      paymentPage: {
+        select: {
+          slug: true,
         },
+      },
+    },
+  },
+},
       });
 
     return res.status(200).json({

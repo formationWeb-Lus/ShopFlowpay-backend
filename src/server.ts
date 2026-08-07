@@ -31,6 +31,8 @@ import socialRoutes
   import publicPaymentPageRoutes from "./routes/publicPaymentPage.routes";
   import publicProductRoutes from "./routes/publicProduct.routes";
 import publicStoreRoutes from "./routes/publicStore.routes";
+import myStoreRoutes from "./routes/myStore.routes";
+import paymentRoutes from "./routes/payment.routes";
 
 const app = express();
 
@@ -176,6 +178,18 @@ app.use("/api/public", publicProductRoutes);
 app.use(
   "/api/public",
   publicStoreRoutes
+);
+
+
+app.use(
+ "/api",
+ myStoreRoutes
+);
+
+
+app.use(
+  "/api/payment",
+  paymentRoutes
 );
 
 // =====================================================
