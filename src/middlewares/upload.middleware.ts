@@ -1,95 +1,64 @@
+
 import multer from "multer";
-import path from "path";
 
+/* =========================================================
+   STORAGE
+========================================================= */
 
-const storage = multer.diskStorage({
+/*
+ * memoryStorage() est utilisé parce que nous voulons
+ * envoyer directement le fichier vers Supabase Storage.
+ *
+ * Le fichier n'est PAS enregistré sur le disque du serveur.
+ */
+const storage =
+  multer.memoryStorage();
 
-  destination: (
-    req,
-    file,
-    cb
-  ) => {
+/* =========================================================
+   ALLOWED IMAGE TYPES
+========================================================= */
 
-    cb(
-      null,
-      "uploads/products"
-    );
+const allowedMimeTypes = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+];
 
-  },
+/* =========================================================
+   UPLOAD CONFIGURATION
+========================================================= */
 
+export const uploadProductImage =
+  multer({
+    storage,
 
-  filename: (
-    req,
-    file,
-    cb
-  ) => {
+    limits: {
+      /*
+       * Maximum : 5 MB
+       */
+      fileSize:
+        5 * 1024 * 1024,
+    },
 
-    const uniqueName =
-      Date.now()
-      + "-"
-      + Math.round(
-          Math.random() * 100000
+    fileFilter: (
+      req,
+      file,
+      callback
+    ) => {
+      if (
+        allowedMimeTypes.includes(
+          file.mimetype
         )
-      + path.extname(
-          file.originalname
-        );
+      ) {
+        callback(null, true);
+        return;
+      }
 
-
-    cb(
-      null,
-      uniqueName
-    );
-
-  }
-
-});
-
-
-const upload = multer({
-
-  storage,
-
-  limits:{
-    fileSize:
-      5 * 1024 * 1024
-  },
-
-
-  fileFilter(
-    req,
-    file,
-    cb
-  ){
-
-    const allowed =
-      [
-        "image/jpeg",
-        "image/png",
-        "image/webp"
-      ];
-
-
-    if(
-      allowed.includes(
-        file.mimetype
-      )
-    ){
-
-      cb(null,true);
-
-    }else{
-
-      cb(
+      callback(
         new Error(
-          "Format image non supporté"
+          "Format d'image non supporté. Utilisez JPG, JPEG, PNG ou WEBP."
         )
       );
-
-    }
-
-  }
-
-});
-
-
-export default upload;
+    },
+  });

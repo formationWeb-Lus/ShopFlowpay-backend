@@ -10,8 +10,12 @@ import {
 import prisma from "../lib/prisma";
 
 import {
- checkProductLimit
+  checkProductLimit,
 } from "../services/subscription.service";
+
+import {
+  supabase,
+} from "../config/supabase";
 
 /* =========================================================
    TYPES
@@ -30,12 +34,37 @@ interface CreateProductBody {
   subtitle?: string | null;
   description?: string | null;
   type: ProductType;
-  price: number;
+  price: number | string;
   currency: Currency;
-  imageUrl?: string | null;
   status?: ProductStatus;
   fields?: ProductFieldInput[];
 }
+
+/*
+ * Express + Multer
+ *
+ * req.file n'est pas présent dans Request par défaut.
+ * On utilise ce type local pour éviter les erreurs TypeScript.
+ */
+interface RequestWithFile extends Request {
+  file?: Express.Multer.File;
+}
+
+/* =========================================================
+   SUPABASE STORAGE CONFIGURATION
+========================================================= */
+
+/*
+ * Nom du bucket Supabase Storage.
+ *
+ * Exemple dans Supabase :
+ *
+ * Storage
+ *   └── product-images
+ *
+ * Le bucket doit être public si on utilise getPublicUrl().
+ */
+const PRODUCT_IMAGE_BUCKET = "product-images";
 
 /* =========================================================
    USER ID
@@ -53,7 +82,6 @@ function getUserId(req: Request): number | null {
 
 /* =========================================================
    PRODUCT INCLUDE
-   Compatible avec ton schema Prisma
 ========================================================= */
 
 const productInclude = {
@@ -71,6 +99,359 @@ const productInclude = {
 
   socialPublications: true,
 };
+
+/* =========================================================
+   IMAGE VALIDATION
+========================================================= */
+
+const ALLOWED_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+];
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+
+/**
+ * Vérifie que le fichier image est valide.
+ */
+function validateImageFile(
+  file?: Express.Multer.File
+): string | null {
+  if (!file) {
+    return null;
+  }
+
+  if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+    return (
+      "Format d'image non supporté. " +
+      "Utilisez JPG, JPEG, PNG ou WEBP."
+    );
+  }
+
+  if (file.size > MAX_IMAGE_SIZE) {
+    return (
+      "L'image est trop volumineuse. " +
+      "La taille maximale est de 5 Mo."
+    );
+  }
+
+  return null;
+}
+
+/* =========================================================
+   IMAGE PATH FROM SUPABASE URL
+========================================================= */
+
+/**
+ * Extrait le chemin du fichier dans Supabase Storage
+ * à partir de son URL publique.
+ *
+ * Exemple :
+ *
+ * https://xxxxx.supabase.co/storage/v1/object/public/
+ * product-images/123/abc.jpg
+ *
+ * retourne :
+ *
+ * 123/abc.jpg
+ */
+function getStoragePathFromPublicUrl(
+  imageUrl: string | null | undefined
+): string | null {
+  if (!imageUrl) {
+    return null;
+  }
+
+  try {
+    const marker =
+      `/storage/v1/object/public/${PRODUCT_IMAGE_BUCKET}/`;
+
+    const index =
+      imageUrl.indexOf(marker);
+
+    if (index === -1) {
+      return null;
+    }
+
+    const path =
+      imageUrl.substring(
+        index + marker.length
+      );
+
+    return path || null;
+  } catch {
+    return null;
+  }
+}
+
+/* =========================================================
+   DELETE SUPABASE IMAGE
+========================================================= */
+
+async function deleteSupabaseImage(
+  imageUrl?: string | null
+): Promise<void> {
+  if (!imageUrl) {
+    return;
+  }
+
+  const storagePath =
+    getStoragePathFromPublicUrl(
+      imageUrl
+    );
+
+  if (!storagePath) {
+    return;
+  }
+
+  try {
+    const { error } =
+      await supabase.storage
+        .from(PRODUCT_IMAGE_BUCKET)
+        .remove([
+          storagePath,
+        ]);
+
+    if (error) {
+      console.error(
+        "SUPABASE DELETE IMAGE ERROR:",
+        error
+      );
+    }
+  } catch (error) {
+    console.error(
+      "SUPABASE DELETE IMAGE EXCEPTION:",
+      error
+    );
+  }
+}
+
+/* =========================================================
+   UPLOAD PRODUCT IMAGE
+========================================================= */
+
+async function uploadProductImage(
+  file: Express.Multer.File,
+  userId: number,
+  productId: number
+): Promise<string> {
+  const extension =
+    getFileExtension(
+      file.originalname,
+      file.mimetype
+    );
+
+  /*
+   * Nom unique.
+   *
+   * Exemple :
+   *
+   * 25/1691234567890-a8f92c.jpg
+   */
+  const fileName =
+    `${Date.now()}-${Math.random()
+      .toString(36)
+      .substring(2, 10)}${extension}`;
+
+  /*
+   * Chaque utilisateur possède son propre dossier.
+   *
+   * userId/productId/file
+   */
+  const storagePath =
+    `${userId}/${productId}/${fileName}`;
+
+  const { error } =
+    await supabase.storage
+      .from(PRODUCT_IMAGE_BUCKET)
+      .upload(
+        storagePath,
+        file.buffer,
+        {
+          contentType:
+            file.mimetype,
+
+          cacheControl:
+            "3600",
+
+          upsert:
+            false,
+        }
+      );
+
+  if (error) {
+    console.error(
+      "SUPABASE UPLOAD ERROR:",
+      error
+    );
+
+    throw new Error(
+      "Impossible d'envoyer l'image vers Supabase."
+    );
+  }
+
+  const {
+    data,
+  } =
+    supabase.storage
+      .from(PRODUCT_IMAGE_BUCKET)
+      .getPublicUrl(
+        storagePath
+      );
+
+  if (
+    !data ||
+    !data.publicUrl
+  ) {
+    /*
+     * Si l'upload a réussi mais que
+     * l'URL publique n'est pas disponible,
+     * on tente de supprimer le fichier
+     * pour éviter un fichier orphelin.
+     */
+    await deleteStoragePath(
+      storagePath
+    );
+
+    throw new Error(
+      "Impossible de récupérer l'URL publique de l'image."
+    );
+  }
+
+  return data.publicUrl;
+}
+
+/* =========================================================
+   GET FILE EXTENSION
+========================================================= */
+
+function getFileExtension(
+  originalName: string,
+  mimeType: string
+): string {
+  const extensionFromName =
+    originalName
+      .split(".")
+      .pop()
+      ?.toLowerCase();
+
+  if (
+    extensionFromName &&
+    [
+      "jpg",
+      "jpeg",
+      "png",
+      "webp",
+    ].includes(extensionFromName)
+  ) {
+    return `.${extensionFromName}`;
+  }
+
+  switch (mimeType) {
+    case "image/jpeg":
+    case "image/jpg":
+      return ".jpg";
+
+    case "image/png":
+      return ".png";
+
+    case "image/webp":
+      return ".webp";
+
+    default:
+      return ".jpg";
+  }
+}
+
+/* =========================================================
+   DELETE STORAGE PATH
+========================================================= */
+
+async function deleteStoragePath(
+  storagePath: string
+): Promise<void> {
+  try {
+    const { error } =
+      await supabase.storage
+        .from(PRODUCT_IMAGE_BUCKET)
+        .remove([
+          storagePath,
+        ]);
+
+    if (error) {
+      console.error(
+        "SUPABASE DELETE STORAGE PATH ERROR:",
+        error
+      );
+    }
+  } catch (error) {
+    console.error(
+      "SUPABASE DELETE STORAGE PATH EXCEPTION:",
+      error
+    );
+  }
+}
+
+/* =========================================================
+   PARSE FIELDS
+========================================================= */
+
+/**
+ * Avec multipart/form-data, le champ `fields`
+ * arrive souvent comme une chaîne JSON.
+ *
+ * Cette fonction accepte :
+ *
+ * fields: [...]
+ *
+ * ou :
+ *
+ * fields: "[...]"
+ */
+function parseFields(
+  fieldsInput:
+    | ProductFieldInput[]
+    | string
+    | undefined
+): ProductFieldInput[] {
+  if (
+    fieldsInput === undefined ||
+    fieldsInput === null
+  ) {
+    return [];
+  }
+
+  if (
+    Array.isArray(fieldsInput)
+  ) {
+    return fieldsInput;
+  }
+
+  if (
+    typeof fieldsInput === "string"
+  ) {
+    if (!fieldsInput.trim()) {
+      return [];
+    }
+
+    try {
+      const parsed =
+        JSON.parse(fieldsInput);
+
+      return Array.isArray(parsed)
+        ? parsed
+        : [];
+    } catch {
+      throw new Error(
+        "Le format des champs personnalisés est invalide."
+      );
+    }
+  }
+
+  return [];
+}
 
 /* =========================================================
    VALIDATE PRODUCT BODY
@@ -95,22 +476,30 @@ function validateProductBody(
 
   if (
     requireName &&
-    (typeof name !== "string" || !name.trim())
+    (
+      typeof name !== "string" ||
+      !name.trim()
+    )
   ) {
-    return "Le nom du produit est obligatoire.";
+    return (
+      "Le nom du produit est obligatoire."
+    );
   }
 
   /* -------------------------------------------------------
      PRICE
   ------------------------------------------------------- */
 
-  const numericPrice = Number(price);
+  const numericPrice =
+    Number(price);
 
   if (
     Number.isNaN(numericPrice) ||
     numericPrice < 0
   ) {
-    return "Le prix du produit est invalide.";
+    return (
+      "Le prix du produit est invalide."
+    );
   }
 
   /* -------------------------------------------------------
@@ -118,9 +507,12 @@ function validateProductBody(
   ------------------------------------------------------- */
 
   if (
-    !Object.values(ProductType).includes(type)
+    !Object.values(ProductType)
+      .includes(type)
   ) {
-    return "Le type de produit est invalide.";
+    return (
+      "Le type de produit est invalide."
+    );
   }
 
   /* -------------------------------------------------------
@@ -128,9 +520,12 @@ function validateProductBody(
   ------------------------------------------------------- */
 
   if (
-    !Object.values(Currency).includes(currency)
+    !Object.values(Currency)
+      .includes(currency)
   ) {
-    return "La devise est invalide.";
+    return (
+      "La devise est invalide."
+    );
   }
 
   /* -------------------------------------------------------
@@ -139,33 +534,44 @@ function validateProductBody(
 
   if (
     status &&
-    !Object.values(ProductStatus).includes(status)
+    !Object.values(ProductStatus)
+      .includes(status)
   ) {
-    return "Le statut du produit est invalide.";
+    return (
+      "Le statut du produit est invalide."
+    );
   }
 
   /* -------------------------------------------------------
      FIELDS
   ------------------------------------------------------- */
 
-  if (!Array.isArray(fields)) {
-    return "Le format des champs personnalisés est invalide.";
+  if (
+    !Array.isArray(fields)
+  ) {
+    return (
+      "Le format des champs personnalisés est invalide."
+    );
   }
 
-  const fieldNames = new Set<string>();
+  const fieldNames =
+    new Set<string>();
 
   for (
     let index = 0;
     index < fields.length;
     index++
   ) {
-    const field = fields[index];
+    const field =
+      fields[index];
 
     if (
       !field ||
       typeof field !== "object"
     ) {
-      return `Le champ ${index + 1} est invalide.`;
+      return (
+        `Le champ ${index + 1} est invalide.`
+      );
     }
 
     /* -----------------------------------------------------
@@ -176,7 +582,9 @@ function validateProductBody(
       typeof field.name !== "string" ||
       !field.name.trim()
     ) {
-      return `Le nom technique du champ ${index + 1} est obligatoire.`;
+      return (
+        `Le nom technique du champ ${index + 1} est obligatoire.`
+      );
     }
 
     const fieldName =
@@ -190,29 +598,38 @@ function validateProductBody(
       typeof field.label !== "string" ||
       !field.label.trim()
     ) {
-      return `Le libellé du champ ${index + 1} est obligatoire.`;
+      return (
+        `Le libellé du champ ${index + 1} est obligatoire.`
+      );
     }
 
     /* -----------------------------------------------------
        UNIQUE NAME
     ----------------------------------------------------- */
 
-    if (fieldNames.has(fieldName)) {
-      return `Le nom technique "${fieldName}" est utilisé plusieurs fois.`;
+    if (
+      fieldNames.has(fieldName)
+    ) {
+      return (
+        `Le nom technique "${fieldName}" est utilisé plusieurs fois.`
+      );
     }
 
-    fieldNames.add(fieldName);
+    fieldNames.add(
+      fieldName
+    );
 
     /* -----------------------------------------------------
        FIELD TYPE
     ----------------------------------------------------- */
 
     if (
-      !Object.values(ProductFieldType).includes(
-        field.type
-      )
+      !Object.values(ProductFieldType)
+        .includes(field.type)
     ) {
-      return `Le type du champ "${fieldName}" est invalide.`;
+      return (
+        `Le type du champ "${fieldName}" est invalide.`
+      );
     }
   }
 
@@ -225,139 +642,264 @@ function validateProductBody(
 ========================================================= */
 
 export const createProduct = async (
-  req: Request,
+  req: RequestWithFile,
   res: Response
 ) => {
+  let uploadedImageUrl:
+    | string
+    | null = null;
+
   try {
     /* -----------------------------------------------------
        AUTH
     ----------------------------------------------------- */
 
-    const userId = getUserId(req);
+    const userId =
+      getUserId(req);
 
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "Utilisateur non authentifié.",
+        message:
+          "Utilisateur non authentifié.",
       });
     }
-
 
     /* -----------------------------------------------------
        BODY
     ----------------------------------------------------- */
 
-    const body =
-      req.body as CreateProductBody;
+    const rawBody =
+      req.body || {};
 
-    const {
-      name,
-      subtitle,
-      description,
-      type,
-      price,
-      currency,
-      imageUrl,
-      status,
-      fields = [],
-    } = body;
+    let fields:
+      ProductFieldInput[] = [];
+
+    try {
+      fields =
+        parseFields(
+          rawBody.fields
+        );
+    } catch {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Le format des champs personnalisés est invalide.",
+      });
+    }
+
+    const body:
+      CreateProductBody = {
+      name:
+        rawBody.name,
+
+      subtitle:
+        rawBody.subtitle,
+
+      description:
+        rawBody.description,
+
+      type:
+        rawBody.type,
+
+      price:
+        rawBody.price,
+
+      currency:
+        rawBody.currency,
+
+      status:
+        rawBody.status,
+
+      fields,
+    };
+
+    /* -----------------------------------------------------
+       IMAGE
+    ----------------------------------------------------- */
+
+    const imageError =
+      validateImageFile(
+        req.file
+      );
+
+    if (imageError) {
+      return res.status(400).json({
+        success: false,
+        message:
+          imageError,
+      });
+    }
 
     /* -----------------------------------------------------
        VALIDATION
     ----------------------------------------------------- */
 
     const validationError =
-      validateProductBody(body);
+      validateProductBody(
+        body
+      );
 
     if (validationError) {
       return res.status(400).json({
         success: false,
-        message: validationError,
+        message:
+          validationError,
       });
     }
 
     const numericPrice =
-      Number(price);
+      Number(
+        body.price
+      );
 
     const productStatus =
-      status || ProductStatus.DRAFT;
+      body.status ||
+      ProductStatus.DRAFT;
 
     /* -----------------------------------------------------
-       CREATE
+       CREATE PRODUCT
     ----------------------------------------------------- */
 
-   /* -----------------------------------------------------
-   CHECK PRODUCT LIMIT
------------------------------------------------------ */
-
-
-
-
+    /*
+     * On crée d'abord le produit.
+     *
+     * Pourquoi ?
+     *
+     * Parce que l'image est rangée dans :
+     *
+     * userId/productId/image
+     *
+     * Nous avons donc besoin de l'id du produit.
+     */
 
     const product =
       await prisma.product.create({
         data: {
           userId,
 
-          name: name.trim(),
+          name:
+            body.name.trim(),
 
           subtitle:
-            subtitle?.trim()
-              ? subtitle.trim()
+            body.subtitle?.trim()
+              ? body.subtitle.trim()
               : null,
 
           description:
-            description?.trim()
-              ? description.trim()
+            body.description?.trim()
+              ? body.description.trim()
               : null,
 
-          type,
+          type:
+            body.type,
 
-          price: numericPrice,
+          price:
+            numericPrice,
 
-          currency,
+          currency:
+            body.currency,
 
+          /*
+           * L'image sera ajoutée juste
+           * après la création du produit.
+           */
           imageUrl:
-            imageUrl?.trim()
-              ? imageUrl.trim()
-              : null,
+            null,
 
-          status: productStatus,
-
-          /* ---------------------------------------------
-             CUSTOM FIELDS
-          --------------------------------------------- */
+          status:
+            productStatus,
 
           fields:
             fields.length > 0
               ? {
-                  create: fields.map(
-                    (field) => ({
-                      name:
-                        field.name.trim(),
+                  create:
+                    fields.map(
+                      (
+                        field
+                      ) => ({
+                        name:
+                          field.name.trim(),
 
-                      label:
-                        field.label.trim(),
+                        label:
+                          field.label.trim(),
 
-                      type:
-                        field.type,
+                        type:
+                          field.type,
 
-                      value:
-                        field.value?.trim()
-                          ? field.value.trim()
-                          : null,
+                        value:
+                          field.value?.trim()
+                            ? field.value.trim()
+                            : null,
 
-                      required:
-                        Boolean(
-                          field.required
-                        ),
-                    })
-                  ),
+                        required:
+                          Boolean(
+                            field.required
+                          ),
+                      })
+                    ),
                 }
               : undefined,
         },
+      });
 
-        include: productInclude,
+    /* -----------------------------------------------------
+       UPLOAD IMAGE
+    ----------------------------------------------------- */
+
+    if (req.file) {
+      try {
+        uploadedImageUrl =
+          await uploadProductImage(
+            req.file,
+            userId,
+            product.id
+          );
+      } catch (error) {
+        /*
+         * Si l'upload échoue,
+         * on supprime le produit créé.
+         */
+        await prisma.product.delete({
+          where: {
+            id:
+              product.id,
+          },
+        });
+
+        throw error;
+      }
+
+      /* ---------------------------------------------------
+         SAVE IMAGE URL
+      --------------------------------------------------- */
+
+      await prisma.product.update({
+        where: {
+          id:
+            product.id,
+        },
+
+        data: {
+          imageUrl:
+            uploadedImageUrl,
+        },
+      });
+    }
+
+    /* -----------------------------------------------------
+       GET COMPLETE PRODUCT
+    ----------------------------------------------------- */
+
+    const completeProduct =
+      await prisma.product.findUnique({
+        where: {
+          id:
+            product.id,
+        },
+
+        include:
+          productInclude,
       });
 
     /* -----------------------------------------------------
@@ -366,9 +908,12 @@ export const createProduct = async (
 
     return res.status(201).json({
       success: true,
+
       message:
         "Produit créé avec succès.",
-      product,
+
+      product:
+        completeProduct,
     });
   } catch (error) {
     console.error(
@@ -378,6 +923,7 @@ export const createProduct = async (
 
     return res.status(500).json({
       success: false,
+
       message:
         "Une erreur est survenue lors de la création du produit.",
     });
@@ -398,11 +944,13 @@ export const getMyProducts = async (
        AUTH
     ----------------------------------------------------- */
 
-    const userId = getUserId(req);
+    const userId =
+      getUserId(req);
 
     if (!userId) {
       return res.status(401).json({
         success: false,
+
         message:
           "Utilisateur non authentifié.",
       });
@@ -418,10 +966,12 @@ export const getMyProducts = async (
           userId,
         },
 
-        include: productInclude,
+        include:
+          productInclude,
 
         orderBy: {
-          createdAt: "desc",
+          createdAt:
+            "desc",
         },
       });
 
@@ -445,6 +995,7 @@ export const getMyProducts = async (
 
     return res.status(500).json({
       success: false,
+
       message:
         "Impossible de récupérer les produits.",
     });
@@ -465,11 +1016,13 @@ export const getProductById = async (
        AUTH
     ----------------------------------------------------- */
 
-    const userId = getUserId(req);
+    const userId =
+      getUserId(req);
 
     if (!userId) {
       return res.status(401).json({
         success: false,
+
         message:
           "Utilisateur non authentifié.",
       });
@@ -480,7 +1033,9 @@ export const getProductById = async (
     ----------------------------------------------------- */
 
     const productId =
-      Number(req.params.id);
+      Number(
+        req.params.id
+      );
 
     if (
       !productId ||
@@ -488,6 +1043,7 @@ export const getProductById = async (
     ) {
       return res.status(400).json({
         success: false,
+
         message:
           "Identifiant du produit invalide.",
       });
@@ -500,16 +1056,20 @@ export const getProductById = async (
     const product =
       await prisma.product.findFirst({
         where: {
-          id: productId,
+          id:
+            productId,
+
           userId,
         },
 
-        include: productInclude,
+        include:
+          productInclude,
       });
 
     if (!product) {
       return res.status(404).json({
         success: false,
+
         message:
           "Produit introuvable.",
       });
@@ -521,6 +1081,7 @@ export const getProductById = async (
 
     return res.status(200).json({
       success: true,
+
       product,
     });
   } catch (error) {
@@ -531,6 +1092,7 @@ export const getProductById = async (
 
     return res.status(500).json({
       success: false,
+
       message:
         "Impossible de récupérer le produit.",
     });
@@ -543,19 +1105,25 @@ export const getProductById = async (
 ========================================================= */
 
 export const updateProduct = async (
-  req: Request,
+  req: RequestWithFile,
   res: Response
 ) => {
+  let newImageUrl:
+    | string
+    | null = null;
+
   try {
     /* -----------------------------------------------------
        AUTH
     ----------------------------------------------------- */
 
-    const userId = getUserId(req);
+    const userId =
+      getUserId(req);
 
     if (!userId) {
       return res.status(401).json({
         success: false,
+
         message:
           "Utilisateur non authentifié.",
       });
@@ -566,7 +1134,9 @@ export const updateProduct = async (
     ----------------------------------------------------- */
 
     const productId =
-      Number(req.params.id);
+      Number(
+        req.params.id
+      );
 
     if (
       !productId ||
@@ -574,6 +1144,7 @@ export const updateProduct = async (
     ) {
       return res.status(400).json({
         success: false,
+
         message:
           "Identifiant du produit invalide.",
       });
@@ -586,7 +1157,9 @@ export const updateProduct = async (
     const existingProduct =
       await prisma.product.findFirst({
         where: {
-          id: productId,
+          id:
+            productId,
+
           userId,
         },
       });
@@ -594,6 +1167,7 @@ export const updateProduct = async (
     if (!existingProduct) {
       return res.status(404).json({
         success: false,
+
         message:
           "Produit introuvable.",
       });
@@ -603,37 +1177,126 @@ export const updateProduct = async (
        BODY
     ----------------------------------------------------- */
 
-    const body =
-      req.body as CreateProductBody;
+    const rawBody =
+      req.body || {};
 
-    const {
-      name,
-      subtitle,
-      description,
-      type,
-      price,
-      currency,
-      imageUrl,
-      status,
-      fields,
-    } = body;
+    let fields:
+      ProductFieldInput[] | undefined;
+
+    /*
+     * Si fields n'est pas envoyé,
+     * on conserve les anciens champs.
+     */
+    if (
+      rawBody.fields !== undefined
+    ) {
+      try {
+        fields =
+          parseFields(
+            rawBody.fields
+          );
+      } catch {
+        return res.status(400).json({
+          success: false,
+
+          message:
+            "Le format des champs personnalisés est invalide.",
+        });
+      }
+    }
+
+    const body:
+      CreateProductBody = {
+      name:
+        rawBody.name,
+
+      subtitle:
+        rawBody.subtitle,
+
+      description:
+        rawBody.description,
+
+      type:
+        rawBody.type,
+
+      price:
+        rawBody.price,
+
+      currency:
+        rawBody.currency,
+
+      status:
+        rawBody.status,
+
+      fields:
+        fields || [],
+    };
+
+    /* -----------------------------------------------------
+       IMAGE VALIDATION
+    ----------------------------------------------------- */
+
+    const imageError =
+      validateImageFile(
+        req.file
+      );
+
+    if (imageError) {
+      return res.status(400).json({
+        success: false,
+
+        message:
+          imageError,
+      });
+    }
 
     /* -----------------------------------------------------
        VALIDATION
     ----------------------------------------------------- */
 
+    /*
+     * Pour la mise à jour, les champs principaux
+     * restent obligatoires dans cette API.
+     */
+    const validationBody = {
+      ...body,
+
+      fields:
+        fields ||
+        [],
+    };
+
     const validationError =
-      validateProductBody(body);
+      validateProductBody(
+        validationBody
+      );
 
     if (validationError) {
       return res.status(400).json({
         success: false,
-        message: validationError,
+
+        message:
+          validationError,
       });
     }
 
     const numericPrice =
-      Number(price);
+      Number(
+        body.price
+      );
+
+    /* -----------------------------------------------------
+       UPLOAD NEW IMAGE
+    ----------------------------------------------------- */
+
+    if (req.file) {
+      newImageUrl =
+        await uploadProductImage(
+          req.file,
+          userId,
+          productId
+        );
+    }
 
     /* -----------------------------------------------------
        TRANSACTION
@@ -646,7 +1309,9 @@ export const updateProduct = async (
              DELETE OLD FIELDS
           --------------------------------------------- */
 
-          if (Array.isArray(fields)) {
+          if (
+            Array.isArray(fields)
+          ) {
             await tx.productField.deleteMany({
               where: {
                 productId,
@@ -658,81 +1323,111 @@ export const updateProduct = async (
              UPDATE PRODUCT
           --------------------------------------------- */
 
-          return tx.product.update({
-            where: {
-              id: productId,
-            },
+          const updated =
+            await tx.product.update({
+              where: {
+                id:
+                  productId,
+              },
 
-            data: {
-              name:
-                name.trim(),
+              data: {
+                name:
+                  body.name.trim(),
 
-              subtitle:
-                subtitle?.trim()
-                  ? subtitle.trim()
-                  : null,
+                subtitle:
+                  body.subtitle?.trim()
+                    ? body.subtitle.trim()
+                    : null,
 
-              description:
-                description?.trim()
-                  ? description.trim()
-                  : null,
+                description:
+                  body.description?.trim()
+                    ? body.description.trim()
+                    : null,
 
-              type,
+                type:
+                  body.type,
 
-              price:
-                numericPrice,
+                price:
+                  numericPrice,
 
-              currency,
+                currency:
+                  body.currency,
 
-              imageUrl:
-                imageUrl?.trim()
-                  ? imageUrl.trim()
-                  : null,
+                /*
+                 * Si une nouvelle image existe,
+                 * on remplace l'ancienne URL.
+                 *
+                 * Sinon on conserve l'ancienne.
+                 */
+                imageUrl:
+                  newImageUrl !== null
+                    ? newImageUrl
+                    : existingProduct.imageUrl,
 
-              status:
-                status ||
-                ProductStatus.DRAFT,
+                status:
+                  body.status ||
+                  existingProduct.status,
 
-              /* -----------------------------------------
-                 NEW FIELDS
-              ----------------------------------------- */
+                fields:
+                  Array.isArray(fields) &&
+                  fields.length > 0
+                    ? {
+                        create:
+                          fields.map(
+                            (
+                              field
+                            ) => ({
+                              name:
+                                field.name.trim(),
 
-              fields:
-                Array.isArray(fields) &&
-                fields.length > 0
-                  ? {
-                      create:
-                        fields.map(
-                          (field) => ({
-                            name:
-                              field.name.trim(),
+                              label:
+                                field.label.trim(),
 
-                            label:
-                              field.label.trim(),
+                              type:
+                                field.type,
 
-                            type:
-                              field.type,
+                              value:
+                                field.value?.trim()
+                                  ? field.value.trim()
+                                  : null,
 
-                            value:
-                              field.value?.trim()
-                                ? field.value.trim()
-                                : null,
+                              required:
+                                Boolean(
+                                  field.required
+                                ),
+                            })
+                          ),
+                      }
+                    : undefined,
+              },
 
-                            required:
-                              Boolean(
-                                field.required
-                              ),
-                          })
-                        ),
-                    }
-                  : undefined,
-            },
+              include:
+                productInclude,
+            });
 
-            include:
-              productInclude,
-          });
+          return updated;
         }
       );
+
+    /* -----------------------------------------------------
+       DELETE OLD IMAGE
+    ----------------------------------------------------- */
+
+    /*
+     * On ne supprime l'ancienne image qu'après
+     * que PostgreSQL ait correctement enregistré
+     * la nouvelle URL.
+     */
+    if (
+      newImageUrl &&
+      existingProduct.imageUrl &&
+      existingProduct.imageUrl !==
+        newImageUrl
+    ) {
+      await deleteSupabaseImage(
+        existingProduct.imageUrl
+      );
+    }
 
     /* -----------------------------------------------------
        RESPONSE
@@ -740,11 +1435,27 @@ export const updateProduct = async (
 
     return res.status(200).json({
       success: true,
+
       message:
         "Produit mis à jour avec succès.",
+
       product,
     });
   } catch (error) {
+    /*
+     * Si une nouvelle image a été uploadée
+     * mais que la transaction PostgreSQL échoue,
+     * on supprime la nouvelle image pour éviter
+     * un fichier orphelin.
+     */
+    if (
+      newImageUrl
+    ) {
+      await deleteSupabaseImage(
+        newImageUrl
+      );
+    }
+
     console.error(
       "UPDATE PRODUCT ERROR:",
       error
@@ -752,6 +1463,7 @@ export const updateProduct = async (
 
     return res.status(500).json({
       success: false,
+
       message:
         "Impossible de mettre à jour le produit.",
     });
@@ -772,11 +1484,13 @@ export const deleteProduct = async (
        AUTH
     ----------------------------------------------------- */
 
-    const userId = getUserId(req);
+    const userId =
+      getUserId(req);
 
     if (!userId) {
       return res.status(401).json({
         success: false,
+
         message:
           "Utilisateur non authentifié.",
       });
@@ -787,7 +1501,9 @@ export const deleteProduct = async (
     ----------------------------------------------------- */
 
     const productId =
-      Number(req.params.id);
+      Number(
+        req.params.id
+      );
 
     if (
       !productId ||
@@ -795,6 +1511,7 @@ export const deleteProduct = async (
     ) {
       return res.status(400).json({
         success: false,
+
         message:
           "Identifiant du produit invalide.",
       });
@@ -807,7 +1524,9 @@ export const deleteProduct = async (
     const product =
       await prisma.product.findFirst({
         where: {
-          id: productId,
+          id:
+            productId,
+
           userId,
         },
       });
@@ -815,40 +1534,62 @@ export const deleteProduct = async (
     if (!product) {
       return res.status(404).json({
         success: false,
+
         message:
           "Produit introuvable.",
       });
     }
 
     /* -----------------------------------------------------
-       DELETE
+       DELETE DATABASE RELATIONS
     ----------------------------------------------------- */
 
     await prisma.$transaction([
-  prisma.productPaymentConfig.deleteMany({
-    where:{
-      productId
-    }
-  }),
+      prisma.productPaymentConfig.deleteMany({
+        where: {
+          productId,
+        },
+      }),
 
-  prisma.paymentPageProduct.deleteMany({
-    where:{
-      productId
-    }
-  }),
+      prisma.paymentPageProduct.deleteMany({
+        where: {
+          productId,
+        },
+      }),
 
-  prisma.product.delete({
-    where:{
-      id: productId
+      prisma.productField.deleteMany({
+        where: {
+          productId,
+        },
+      }),
+
+      prisma.product.delete({
+        where: {
+          id:
+            productId,
+        },
+      }),
+    ]);
+
+    /* -----------------------------------------------------
+       DELETE SUPABASE IMAGE
+    ----------------------------------------------------- */
+
+    if (
+      product.imageUrl
+    ) {
+      await deleteSupabaseImage(
+        product.imageUrl
+      );
     }
-  })
-]);
+
     /* -----------------------------------------------------
        RESPONSE
     ----------------------------------------------------- */
 
     return res.status(200).json({
       success: true,
+
       message:
         "Produit supprimé avec succès.",
     });
@@ -860,6 +1601,7 @@ export const deleteProduct = async (
 
     return res.status(500).json({
       success: false,
+
       message:
         "Impossible de supprimer le produit.",
     });
@@ -880,11 +1622,13 @@ export const publishProduct = async (
        AUTH
     ----------------------------------------------------- */
 
-    const userId = getUserId(req);
+    const userId =
+      getUserId(req);
 
     if (!userId) {
       return res.status(401).json({
         success: false,
+
         message:
           "Utilisateur non authentifié.",
       });
@@ -895,7 +1639,9 @@ export const publishProduct = async (
     ----------------------------------------------------- */
 
     const productId =
-      Number(req.params.id);
+      Number(
+        req.params.id
+      );
 
     if (
       !productId ||
@@ -903,6 +1649,7 @@ export const publishProduct = async (
     ) {
       return res.status(400).json({
         success: false,
+
         message:
           "Identifiant du produit invalide.",
       });
@@ -915,7 +1662,9 @@ export const publishProduct = async (
     const product =
       await prisma.product.findFirst({
         where: {
-          id: productId,
+          id:
+            productId,
+
           userId,
         },
       });
@@ -923,48 +1672,86 @@ export const publishProduct = async (
     if (!product) {
       return res.status(404).json({
         success: false,
+
         message:
           "Produit introuvable.",
       });
     }
 
     /* -----------------------------------------------------
-   CHECK SUBSCRIPTION
------------------------------------------------------ */
+       CHECK IMAGE
+    ----------------------------------------------------- */
 
-try {
+    /*
+     * Un produit publié doit avoir une image
+     * si ton interface considère l'image obligatoire.
+     *
+     * Si l'image n'est PAS obligatoire dans ton projet,
+     * supprime simplement cette vérification.
+     */
+    if (
+      !product.imageUrl
+    ) {
+      return res.status(400).json({
+        success: false,
 
-  const limit = await checkProductLimit(userId);
+        code:
+          "PRODUCT_IMAGE_REQUIRED",
 
-  if (!limit.allowed) {
-    return res.status(403).json({
-      success: false,
-      code: "SUBSCRIPTION_REQUIRED",
-      message:
-        "Vous devez souscrire à un abonnement pour publier ce produit.",
-    });
-  }
+        message:
+          "Veuillez ajouter une image au produit avant de le publier.",
+      });
+    }
 
-} catch {
+    /* -----------------------------------------------------
+       CHECK SUBSCRIPTION
+    ----------------------------------------------------- */
 
-  return res.status(403).json({
-    success: false,
-    code: "SUBSCRIPTION_REQUIRED",
-    message:
-      "Vous devez souscrire à un abonnement pour publier ce produit.",
-  });
+    try {
+      const limit =
+        await checkProductLimit(
+          userId
+        );
 
-}
+      if (
+        !limit.allowed
+      ) {
+        return res.status(403).json({
+          success: false,
 
-/* -----------------------------------------------------
-   PUBLISH
------------------------------------------------------ */
+          code:
+            "SUBSCRIPTION_REQUIRED",
 
+          message:
+            "Vous devez souscrire à un abonnement pour publier ce produit.",
+        });
+      }
+    } catch (error) {
+      console.error(
+        "CHECK PRODUCT LIMIT ERROR:",
+        error
+      );
+
+      return res.status(403).json({
+        success: false,
+
+        code:
+          "SUBSCRIPTION_REQUIRED",
+
+        message:
+          "Vous devez souscrire à un abonnement pour publier ce produit.",
+      });
+    }
+
+    /* -----------------------------------------------------
+       PUBLISH
+    ----------------------------------------------------- */
 
     const updatedProduct =
       await prisma.product.update({
         where: {
-          id: productId,
+          id:
+            productId,
         },
 
         data: {
@@ -982,8 +1769,10 @@ try {
 
     return res.status(200).json({
       success: true,
+
       message:
         "Produit publié avec succès.",
+
       product:
         updatedProduct,
     });
@@ -995,6 +1784,7 @@ try {
 
     return res.status(500).json({
       success: false,
+
       message:
         "Impossible de publier le produit.",
     });
