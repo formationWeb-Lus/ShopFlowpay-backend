@@ -1,5 +1,6 @@
 
 import { Request, Response } from "express";
+
 import prisma from "../lib/prisma";
 
 /**
@@ -14,115 +15,206 @@ import prisma from "../lib/prisma";
  * - l'entrepreneur
  * - son entreprise
  * - uniquement ses produits/services publiés
+ *
+ * =========================================================
  */
+
 export async function getPublicStore(
   req: Request,
   res: Response
 ) {
   try {
-    const { slug } = req.params;
+    /* =====================================================
+       1. RÉCUPÉRER LE SLUG
+    ===================================================== */
 
-    if (!slug || !slug.trim()) {
+    const rawSlug =
+      req.params.slug;
+
+    /*
+     * Express peut typer un paramètre
+     * comme string | string[].
+     *
+     * Nous récupérons donc une seule valeur.
+     */
+
+    const slug =
+      Array.isArray(rawSlug)
+        ? rawSlug[0]
+        : rawSlug;
+
+    /* =====================================================
+       2. VALIDATION DU SLUG
+    ===================================================== */
+
+    if (
+      typeof slug !== "string" ||
+      !slug.trim()
+    ) {
       return res.status(400).json({
         success: false,
         message: "Slug invalide.",
       });
     }
 
-    const normalizedSlug = slug
-      .trim()
-      .toLowerCase();
+    /* =====================================================
+       3. NORMALISER LE SLUG
+    ===================================================== */
 
-    /**
-     * =====================================================
-     * RECHERCHER L'UTILISATEUR
-     * =====================================================
-     */
+    const normalizedSlug =
+      slug
+        .trim()
+        .toLowerCase();
 
-    const user = await prisma.user.findUnique({
-      where: {
-        slug: normalizedSlug,
-      },
+    /* =====================================================
+       4. RECHERCHER L'UTILISATEUR
+    ===================================================== */
 
-      select: {
-        id: true,
-        name: true,
-
-        company: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
+    const user =
+      await prisma.user.findUnique({
+        where: {
+          slug: normalizedSlug,
         },
 
-        products: {
-          where: {
-            status: "PUBLISHED",
+        select: {
+          /* ===============================================
+             UTILISATEUR
+          =============================================== */
+
+          id: true,
+
+          name: true,
+
+          /* ===============================================
+             ENTREPRISE
+          =============================================== */
+
+          company: {
+            select: {
+              id: true,
+
+              name: true,
+
+              slug: true,
+            },
           },
 
-          orderBy: {
-            createdAt: "desc",
-          },
+          /* ===============================================
+             PRODUITS PUBLIÉS
+          =============================================== */
 
-          select: {
-            id: true,
-            name: true,
-            subtitle: true,
-            description: true,
-            type: true,
-            price: true,
-            currency: true,
-            imageUrl: true,
-            status: true,
-            createdAt: true,
+          products: {
+            where: {
+              status: "PUBLISHED",
+            },
+
+            orderBy: {
+              createdAt: "desc",
+            },
+
+            select: {
+              id: true,
+
+              name: true,
+
+              subtitle: true,
+
+              description: true,
+
+              type: true,
+
+              price: true,
+
+              currency: true,
+
+              imageUrl: true,
+
+              status: true,
+
+              createdAt: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    /**
-     * =====================================================
-     * ENTREPRENEUR INTROUVABLE
-     * =====================================================
-     */
+    /* =====================================================
+       5. ENTREPRENEUR INTROUVABLE
+    ===================================================== */
 
     if (!user) {
       return res.status(404).json({
         success: false,
+
         message:
           "Cette boutique ou cet entrepreneur n'existe pas.",
       });
     }
 
-    /**
-     * =====================================================
-     * REPONSE
-     * =====================================================
-     */
+    /* =====================================================
+       6. RÉPONSE PUBLIQUE
+    ===================================================== */
 
     return res.status(200).json({
       success: true,
 
+      /* ===============================================
+         ENTREPRENEUR
+      =============================================== */
+
       entrepreneur: {
-        id: user.id,
-        name: user.name,
+        id:
+          user.id,
+
+        name:
+          user.name,
       },
 
-      company: user.company,
+      /* ===============================================
+         ENTREPRISE
+      =============================================== */
 
-      products: user.products,
+      company:
+        user.company,
+
+      /* ===============================================
+         PRODUITS
+      =============================================== */
+
+      products:
+        user.products,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    /* =====================================================
+       ERREUR
+    ===================================================== */
+
     console.error(
-      "GET PUBLIC STORE ERROR:",
-      error
+      "========================================"
     );
+
+    console.error(
+      "❌ GET PUBLIC STORE ERROR"
+    );
+
+    console.error(
+      "========================================"
+    );
+
+    console.error(error);
 
     return res.status(500).json({
       success: false,
+
       message:
         "Erreur lors du chargement de la boutique.",
+
+      error:
+        process.env.NODE_ENV !==
+        "production"
+          ? error instanceof Error
+            ? error.stack
+            : undefined
+          : undefined,
     });
   }
 }

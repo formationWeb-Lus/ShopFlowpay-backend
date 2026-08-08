@@ -1,3 +1,4 @@
+
 import { Request, Response } from "express";
 import {
   PrismaClient,
@@ -40,60 +41,74 @@ export const getPublicPaymentPage = async (
 
     /* =================================================
        2. RECHERCHER LA PAGE PUBLIQUE
+       
+       IMPORTANT :
+       PaymentPage possède `products`
+       et non `product`.
+
+       products -> PaymentPageProduct[]
+       products[].product -> Product
     ================================================= */
 
     const paymentPage =
       await prisma.paymentPage.findFirst({
         where: {
           slug: cleanSlug,
-
           active: true,
 
-          product: {
-            status: ProductStatus.PUBLISHED,
+          products: {
+            some: {
+              product: {
+                status: ProductStatus.PUBLISHED,
+              },
+            },
           },
         },
 
         include: {
           /* =============================================
-             PRODUIT
+             PRODUITS DE LA PAGE
           ============================================= */
 
-          product: {
+          products: {
             include: {
-              /* =========================================
-                 CHAMPS D'INSCRIPTION
-              ========================================= */
-
-              fields: {
-                orderBy: {
-                  id: "asc",
-                },
-              },
-
-              /* =========================================
-                 FORMATEUR / PROPRIÉTAIRE
-              ========================================= */
-
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  phone: true,
-
+              product: {
+                include: {
                   /* =====================================
-                     ÉCOLE / ENTREPRISE
+                     CHAMPS DU PRODUIT
                   ===================================== */
 
-                  company: {
+                  fields: {
+                    orderBy: {
+                      id: "asc",
+                    },
+                  },
+
+                  /* =====================================
+                     PROPRIÉTAIRE DU PRODUIT
+                  ===================================== */
+
+                  user: {
                     select: {
                       id: true,
                       name: true,
-                      logo: true,
-                      address: true,
-                      phone: true,
                       email: true,
+                      phone: true,
+
+                      /* ===============================
+                         ENTREPRISE
+                      =============================== */
+
+                      company: {
+                        select: {
+                          id: true,
+                          name: true,
+                          logo: true,
+                          address: true,
+                          phone: true,
+                          email: true,
+                        },
+                      },
                     },
                   },
                 },
@@ -116,28 +131,58 @@ export const getPublicPaymentPage = async (
     }
 
     /* =================================================
-       4. RÉCUPÉRER LE PRODUIT
+       4. VÉRIFIER LES PRODUITS
     ================================================= */
 
-    const product =
-      paymentPage.product;
+    if (
+      !Array.isArray(paymentPage.products) ||
+      paymentPage.products.length === 0
+    ) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Aucun produit n'est associé à cette page de paiement.",
+      });
+    }
 
     /* =================================================
-       5. RÉCUPÉRER LE FORMATEUR
+       5. RÉCUPÉRER LE PRODUIT PUBLIÉ
+    ================================================= */
+
+    const paymentPageProduct =
+      paymentPage.products.find(
+        (item) =>
+          item.product.status ===
+          ProductStatus.PUBLISHED
+      );
+
+    if (!paymentPageProduct) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Le produit associé à cette page n'est pas disponible.",
+      });
+    }
+
+    const product =
+      paymentPageProduct.product;
+
+    /* =================================================
+       6. RÉCUPÉRER LE PROPRIÉTAIRE
     ================================================= */
 
     const instructor =
       product.user;
 
     /* =================================================
-       6. RÉCUPÉRER L'ÉCOLE / ENTREPRISE
+       7. RÉCUPÉRER L'ENTREPRISE
     ================================================= */
 
     const company =
-      instructor.company;
+      instructor?.company ?? null;
 
     /* =================================================
-       7. RÉPONSE PUBLIQUE
+       8. RÉPONSE PUBLIQUE
     ================================================= */
 
     return res.status(200).json({
@@ -148,7 +193,8 @@ export const getPublicPaymentPage = async (
       =============================================== */
 
       paymentPage: {
-        id: paymentPage.id,
+        id:
+          paymentPage.id,
 
         title:
           paymentPage.title,
@@ -167,7 +213,7 @@ export const getPublicPaymentPage = async (
       },
 
       /* ===============================================
-         FORMATION / PRODUIT
+         PRODUIT
       =============================================== */
 
       product: {
@@ -198,57 +244,57 @@ export const getPublicPaymentPage = async (
         status:
           product.status,
 
-        /* Champs d'inscription */
         fields:
           product.fields,
       },
 
       /* ===============================================
-         FORMATEUR
+         FORMATEUR / PROPRIÉTAIRE
       =============================================== */
 
-      instructor: {
-        id:
-          instructor.id,
+      instructor: instructor
+        ? {
+            id:
+              instructor.id,
 
-        name:
-          instructor.name,
+            name:
+              instructor.name,
 
-        email:
-          instructor.email,
+            email:
+              instructor.email,
 
-        phone:
-          instructor.phone,
-      },
+            phone:
+              instructor.phone,
+          }
+        : null,
 
       /* ===============================================
-         ÉCOLE / ENTREPRISE
+         ENTREPRISE
       =============================================== */
 
-      company:
-        company
-          ? {
-              id:
-                company.id,
+      company: company
+        ? {
+            id:
+              company.id,
 
-              name:
-                company.name,
+            name:
+              company.name,
 
-              logo:
-                company.logo,
+            logo:
+              company.logo,
 
-              address:
-                company.address,
+            address:
+              company.address,
 
-              phone:
-                company.phone,
+            phone:
+              company.phone,
 
-              email:
-                company.email,
-            }
-          : null,
+            email:
+              company.email,
+          }
+        : null,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     /* =================================================
        ERREUR
     ================================================= */
@@ -271,13 +317,16 @@ export const getPublicPaymentPage = async (
       success: false,
 
       message:
-        error?.message ||
-        "Impossible de récupérer la page de paiement.",
+        error instanceof Error
+          ? error.message
+          : "Impossible de récupérer la page de paiement.",
 
       error:
         process.env.NODE_ENV !==
         "production"
-          ? error?.stack
+          ? error instanceof Error
+            ? error.stack
+            : undefined
           : undefined,
     });
   }
