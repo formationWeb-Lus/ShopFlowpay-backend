@@ -4,89 +4,38 @@ import axios from "axios";
 // TYPES SERDIPAY
 // =====================================================
 
-export type SerdiPayCurrency =
-  | "USD"
-  | "CDF";
-
 export type SerdiPayTelecom =
   | "AM"
   | "OM"
   | "MP"
   | "AF";
 
-// =====================================================
-// DONNÉES DE PAIEMENT
-// =====================================================
-//
-// IMPORTANT :
-// Les identifiants API et marchand restent uniquement
-// dans le backend.
-//
-// Le controller n'envoie donc que :
-// - clientPhone
-// - amount
-// - currency
-// - telecom
-//
-// =====================================================
+export type SerdiPayCurrency =
+  | "USD"
+  | "CDF";
 
 export interface SerdiPayPaymentData {
   clientPhone: string;
-
   amount: number;
-
   currency: SerdiPayCurrency;
-
   telecom: SerdiPayTelecom;
 }
 
-// =====================================================
-// RÉSULTAT SERDIPAY
-// =====================================================
-
 export interface SerdiPayPaymentResult {
   success: boolean;
-
-  statusCode: number;
-
   message: string;
-
-  sessionId: string | null;
-
-  transactionId: string | null;
-
-  status:
-    | "pending"
-    | "success"
-    | "failed";
-
-  raw?: unknown;
+  sessionId?: string | null;
+  transactionId?: string | null;
+  payment?: any;
+  raw?: any;
 }
 
 // =====================================================
-// RÉSULTAT VÉRIFICATION
-// =====================================================
-
-export interface SerdiPayPaymentStatusResult {
-  success: boolean;
-
-  status:
-    | "pending"
-    | "success"
-    | "failed";
-
-  transactionId: string;
-
-  message: string;
-
-  raw?: unknown;
-}
-
-// =====================================================
-// CONFIGURATION
+// CONFIGURATION SERDIPAY
 // =====================================================
 
 const SERDIPAY_BASE_URL =
+  process.env.SERDIPAY_BASE_URL ||
   "https://serdipay.com/api/public-api/v1";
 
 const SERDIPAY_TOKEN_URL =
@@ -118,115 +67,124 @@ const SERDIPAY_MERCHANT_PIN =
   process.env.SERDIPAY_MERCHANT_PIN || "";
 
 // =====================================================
-// TOKEN CACHE
+// CONFIGURATION TOKEN
+// =====================================================
+//
+// On ne garde PAS le token indéfiniment.
+//
+// Même si SerdiPay ne donne pas explicitement
+// une date d'expiration dans la réponse,
+// on renouvelle périodiquement le token.
+//
 // =====================================================
 
-let cachedToken: string | null = null;
+const TOKEN_CACHE_MINUTES = Number(
+  process.env.SERDIPAY_TOKEN_CACHE_MINUTES || 10
+);
 
 // =====================================================
-// OBTENIR LE TOKEN SERDIPAY
+// AXIOS CLIENT
 // =====================================================
 
-export async function getSerdiPayToken(): Promise<string> {
+const api = axios.create({
+  baseURL: SERDIPAY_BASE_URL,
+  timeout: 120000,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
 
-  // ---------------------------------------------------
-  // TOKEN DÉJÀ EN CACHE
-  // ---------------------------------------------------
+// =====================================================
+// CACHE TOKEN
+// =====================================================
 
-  if (cachedToken) {
-    return cachedToken;
-  }
+let accessToken: string | null = null;
 
-  // ---------------------------------------------------
-  // VÉRIFICATION IDENTIFIANTS
-  // ---------------------------------------------------
+let tokenExpiresAt: number | null = null;
 
-  if (
-    !SERDIPAY_EMAIL ||
-    !SERDIPAY_PASSWORD
-  ) {
-    throw new Error(
-      "SERDIPAY_EMAIL ou SERDIPAY_PASSWORD manquant dans .env"
-    );
-  }
+// =====================================================
+// LOG CONFIGURATION
+// =====================================================
 
-  try {
+console.log("========================================");
+console.log("CONFIGURATION SERDIPAY");
+console.log("========================================");
+console.log(
+  "BASE_URL :",
+  SERDIPAY_BASE_URL
+);
+console.log(
+  "EMAIL :",
+  SERDIPAY_EMAIL
+);
+console.log(
+  "API_ID présent :",
+  Boolean(SERDIPAY_API_ID)
+);
+console.log(
+  "API_PASSWORD présent :",
+  Boolean(SERDIPAY_API_PASSWORD)
+);
+console.log(
+  "MERCHANT_CODE présent :",
+  Boolean(SERDIPAY_MERCHANT_CODE)
+);
+console.log(
+  "MERCHANT_PIN présent :",
+  Boolean(SERDIPAY_MERCHANT_PIN)
+);
+console.log(
+  "TOKEN CACHE :",
+  `${TOKEN_CACHE_MINUTES} minutes`
+);
+console.log("========================================");
 
-    console.log(
-      "🔐 Demande du token SerdiPay..."
-    );
+// =====================================================
+// VIDER LE CACHE DU TOKEN
+// =====================================================
 
-    const response =
-      await axios.post(
+export function clearTokenCache(): void {
+  accessToken = null;
+  tokenExpiresAt = null;
 
-        SERDIPAY_TOKEN_URL,
-
-        {
-          email:
-            SERDIPAY_EMAIL,
-
-          password:
-            SERDIPAY_PASSWORD,
-        },
-
-        {
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          timeout:
-            30000,
-        }
-
-      );
-
-    const token =
-      response.data?.access_token;
-
-    if (!token) {
-
-      console.error(
-        "❌ Réponse token SerdiPay :",
-        response.data
-      );
-
-      throw new Error(
-        "Token SerdiPay absent dans la réponse."
-      );
-    }
-
-    cachedToken =
-      String(token);
-
-    console.log(
-      "✅ Token SerdiPay obtenu."
-    );
-
-    return cachedToken;
-
-  } catch (error: any) {
-
-    console.error(
-      "❌ SERDIPAY TOKEN ERROR:",
-      error.response?.data ||
-      error.message
-    );
-
-    throw new Error(
-
-      error.response?.data?.message ||
-      "Impossible d'obtenir le token SerdiPay."
-
-    );
-  }
+  console.log(
+    "🗑️ Cache du token SerdiPay supprimé."
+  );
 }
 
 // =====================================================
-// VÉRIFIER LA CONFIGURATION
+// TOKEN ACTUEL
 // =====================================================
 
-function validateSerdiPayConfiguration() {
+export function getCurrentToken(): string | null {
+  return accessToken;
+}
+
+// =====================================================
+// EXPIRATION TOKEN
+// =====================================================
+
+export function getTokenExpiration(): number | null {
+  return tokenExpiresAt;
+}
+
+// =====================================================
+// VALIDATION CONFIGURATION
+// =====================================================
+
+function validateSerdiPayConfiguration(): void {
+
+  if (!SERDIPAY_EMAIL) {
+    throw new Error(
+      "SERDIPAY_EMAIL manquant dans .env"
+    );
+  }
+
+  if (!SERDIPAY_PASSWORD) {
+    throw new Error(
+      "SERDIPAY_PASSWORD manquant dans .env"
+    );
+  }
 
   if (!SERDIPAY_API_ID) {
     throw new Error(
@@ -254,22 +212,22 @@ function validateSerdiPayConfiguration() {
 }
 
 // =====================================================
-// VALIDATION DONNÉES PAIEMENT
+// VALIDATION PAIEMENT
 // =====================================================
 
 function validatePaymentData(
   data: SerdiPayPaymentData
-) {
+): void {
+
+  if (!data) {
+    throw new Error(
+      "Données de paiement manquantes."
+    );
+  }
 
   if (!data.clientPhone) {
     throw new Error(
       "Numéro client manquant."
-    );
-  }
-
-  if (!data.amount) {
-    throw new Error(
-      "Montant paiement manquant."
     );
   }
 
@@ -305,7 +263,290 @@ function validatePaymentData(
 }
 
 // =====================================================
-// TRAITER UN PAIEMENT SERDIPAY
+// OBTENIR TOKEN SERDIPAY
+// =====================================================
+
+export async function getSerdiPayToken(): Promise<string> {
+
+  // ---------------------------------------------------
+  // TOKEN EN CACHE
+  // ---------------------------------------------------
+
+  if (
+    accessToken &&
+    tokenExpiresAt &&
+    tokenExpiresAt > Date.now()
+  ) {
+
+    console.log(
+      "✅ Token SerdiPay récupéré depuis le cache."
+    );
+
+    return accessToken;
+  }
+
+  // ---------------------------------------------------
+  // IDENTIFIANTS
+  // ---------------------------------------------------
+
+  if (!SERDIPAY_EMAIL) {
+    throw new Error(
+      "SERDIPAY_EMAIL manquant dans .env"
+    );
+  }
+
+  if (!SERDIPAY_PASSWORD) {
+    throw new Error(
+      "SERDIPAY_PASSWORD manquant dans .env"
+    );
+  }
+
+  // ---------------------------------------------------
+  // AUTHENTIFICATION
+  // ---------------------------------------------------
+
+  try {
+
+    console.log("");
+    console.log("========================================");
+    console.log("🔐 AUTHENTIFICATION SERDIPAY");
+    console.log("========================================");
+
+    const response = await api.post(
+      "/merchant/get-token",
+      {
+        email: SERDIPAY_EMAIL,
+        password: SERDIPAY_PASSWORD,
+      }
+    );
+
+    // -------------------------------------------------
+    // NE PAS AFFICHER LE TOKEN
+    // -------------------------------------------------
+
+    console.log(
+      "Status token SerdiPay :",
+      response.status
+    );
+
+    console.log(
+      "Réponse token reçue :",
+      {
+        success:
+          response.data?.success,
+        hasAccessToken:
+          Boolean(
+            response.data?.access_token
+          ),
+      }
+    );
+
+    // -------------------------------------------------
+    // EXTRACTION TOKEN
+    // -------------------------------------------------
+
+    const token =
+      response.data?.access_token;
+
+    if (!token) {
+
+      console.error(
+        "❌ Token SerdiPay introuvable."
+      );
+
+      console.error(
+        "Clés reçues :",
+        Object.keys(
+          response.data || {}
+        )
+      );
+
+      throw new Error(
+        "Token SerdiPay introuvable."
+      );
+    }
+
+    // -------------------------------------------------
+    // CACHE
+    // -------------------------------------------------
+
+    accessToken = String(token);
+
+    tokenExpiresAt =
+      Date.now() +
+      TOKEN_CACHE_MINUTES *
+        60 *
+        1000;
+
+    console.log(
+      "✅ Nouveau token SerdiPay enregistré."
+    );
+
+    console.log(
+      "⏱️ Expiration du cache :",
+      new Date(
+        tokenExpiresAt
+      ).toISOString()
+    );
+
+    return accessToken;
+
+  } catch (error: any) {
+
+    console.error("");
+    console.error(
+      "========================================"
+    );
+    console.error(
+      "❌ AUTHENTIFICATION SERDIPAY"
+    );
+    console.error(
+      "========================================"
+    );
+
+    if (error.response) {
+
+      console.error(
+        "Status :",
+        error.response.status
+      );
+
+      console.error(
+        "Réponse :",
+        error.response.data
+      );
+
+      throw new Error(
+        error.response.data?.message ||
+        "Erreur d'authentification SerdiPay."
+      );
+    }
+
+    console.error(
+      "Erreur :",
+      error.message
+    );
+
+    throw new Error(
+      error.message ||
+      "Impossible d'obtenir le token SerdiPay."
+    );
+  }
+}
+
+// =====================================================
+// CONSTRUIRE PAYLOAD PAIEMENT
+// =====================================================
+
+function buildPaymentPayload(
+  data: SerdiPayPaymentData
+) {
+
+  return {
+
+    api_id:
+      SERDIPAY_API_ID,
+
+    api_password:
+      SERDIPAY_API_PASSWORD,
+
+    merchantCode:
+      SERDIPAY_MERCHANT_CODE,
+
+    merchant_pin:
+      SERDIPAY_MERCHANT_PIN,
+
+    clientPhone:
+      data.clientPhone,
+
+    amount:
+      Number(data.amount),
+
+    currency:
+      data.currency,
+
+    telecom:
+      data.telecom,
+
+  };
+}
+
+// =====================================================
+// APPEL PAYMENT-MERCHANT
+// =====================================================
+
+async function sendPaymentRequest(
+  token: string,
+  payload: any
+) {
+
+  console.log("");
+  console.log(
+    "========================================"
+  );
+  console.log(
+    "📤 APPEL API SERDIPAY"
+  );
+  console.log(
+    "========================================"
+  );
+
+  console.log(
+    "URL :",
+    SERDIPAY_PAYMENT_URL
+  );
+
+  console.log(
+    "Payload :",
+    {
+      api_id:
+        SERDIPAY_API_ID
+          ? "********"
+          : "MANQUANT",
+
+      api_password:
+        SERDIPAY_API_PASSWORD
+          ? "********"
+          : "MANQUANT",
+
+      merchantCode:
+        SERDIPAY_MERCHANT_CODE
+          ? "********"
+          : "MANQUANT",
+
+      merchant_pin:
+        SERDIPAY_MERCHANT_PIN
+          ? "********"
+          : "MANQUANT",
+
+      clientPhone:
+        payload.clientPhone,
+
+      amount:
+        payload.amount,
+
+      currency:
+        payload.currency,
+
+      telecom:
+        payload.telecom,
+    }
+  );
+
+  return api.post(
+    "/merchant/payment-merchant",
+    payload,
+    {
+      headers: {
+        Authorization:
+          `Bearer ${token}`,
+      },
+    }
+  );
+}
+
+// =====================================================
+// TRAITER PAIEMENT SERDIPAY
 // =====================================================
 
 export async function processSerdiPayPayment(
@@ -321,131 +562,158 @@ export async function processSerdiPayPayment(
     validateSerdiPayConfiguration();
 
     // -------------------------------------------------
-    // VALIDATION DONNÉES
+    // VALIDATION PAIEMENT
     // -------------------------------------------------
 
     validatePaymentData(data);
 
     // -------------------------------------------------
-    // TOKEN
+    // LOG PAIEMENT
     // -------------------------------------------------
 
-    const token =
-      await getSerdiPayToken();
-
-    // -------------------------------------------------
-    // PAYLOAD SERDIPAY
-    // -------------------------------------------------
-    //
-    // C'est ici que le montant choisi par le client
-    // arrive directement chez SerdiPay.
-    //
-    // Exemple :
-    //
-    // USD :
-    // amount: 15
-    // currency: "USD"
-    //
-    // CDF :
-    // amount: 33450
-    // currency: "CDF"
-    //
-    // -------------------------------------------------
-
-    const payload = {
-
-      api_id:
-        SERDIPAY_API_ID,
-
-      api_password:
-        SERDIPAY_API_PASSWORD,
-
-      merchantCode:
-        SERDIPAY_MERCHANT_CODE,
-
-      merchant_pin:
-        SERDIPAY_MERCHANT_PIN,
-
-      clientPhone:
-        data.clientPhone,
-
-      amount:
-        data.amount,
-
-      currency:
-        data.currency,
-
-      telecom:
-        data.telecom,
-
-    };
+    console.log("");
+    console.log(
+      "=============================================="
+    );
+    console.log(
+      "💳 NOUVEAU PAIEMENT SERDIPAY"
+    );
+    console.log(
+      "=============================================="
+    );
 
     console.log(
-      "💳 SERDIPAY PAYMENT REQUEST:",
-      {
-        clientPhone:
-          data.clientPhone,
+      "Montant :",
+      data.amount
+    );
 
-        amount:
-          data.amount,
+    console.log(
+      "Devise :",
+      data.currency
+    );
 
-        currency:
-          data.currency,
+    console.log(
+      "Téléphone :",
+      data.clientPhone
+    );
 
-        telecom:
-          data.telecom,
-      }
+    console.log(
+      "Telecom :",
+      data.telecom
+    );
+
+    console.log(
+      "=============================================="
     );
 
     // -------------------------------------------------
-    // APPEL API SERDIPAY
+    // TOKEN
     // -------------------------------------------------
 
-    const response =
-      await axios.post(
-
-        SERDIPAY_PAYMENT_URL,
-
-        payload,
-
-        {
-          headers: {
-
-            "Content-Type":
-              "application/json",
-
-            Authorization:
-              `Bearer ${token}`,
-
-          },
-
-          timeout:
-            120000,
-        }
-
-      );
+    let token =
+      await getSerdiPayToken();
 
     // -------------------------------------------------
-    // RÉPONSE
+    // PAYLOAD
+    // -------------------------------------------------
+
+    const payload =
+      buildPaymentPayload(data);
+
+    // -------------------------------------------------
+    // PREMIER APPEL
+    // -------------------------------------------------
+
+    let response;
+
+    try {
+
+      response =
+        await sendPaymentRequest(
+          token,
+          payload
+        );
+
+    } catch (error: any) {
+
+      // -----------------------------------------------
+      // TOKEN INVALIDE / EXPIRÉ
+      // -----------------------------------------------
+
+      if (
+        error.response?.status === 401
+      ) {
+
+        console.log("");
+        console.log(
+          "⚠️ TOKEN SERDIPAY INVALIDE OU EXPIRÉ"
+        );
+
+        console.log(
+          "🔄 Suppression du token..."
+        );
+
+        clearTokenCache();
+
+        // ---------------------------------------------
+        // NOUVEAU TOKEN
+        // ---------------------------------------------
+
+        token =
+          await getSerdiPayToken();
+
+        console.log(
+          "🔄 Nouvelle tentative du paiement..."
+        );
+
+        // ---------------------------------------------
+        // SECOND APPEL
+        // ---------------------------------------------
+
+        response =
+          await sendPaymentRequest(
+            token,
+            payload
+          );
+
+      } else {
+
+        throw error;
+      }
+    }
+
+    // -------------------------------------------------
+    // RÉPONSE SERDIPAY
     // -------------------------------------------------
 
     const body =
       response.data || {};
 
+    console.log("");
     console.log(
-      "📦 SERDIPAY PAYMENT RESPONSE:",
-      body
+      "========================================"
     );
+    console.log(
+      "📦 SERDIPAY PAYMENT RESPONSE"
+    );
+    console.log(
+      "========================================"
+    );
+
+    console.log(
+      JSON.stringify(
+        body,
+        null,
+        2
+      )
+    );
+
+    // -------------------------------------------------
+    // PAYMENT
+    // -------------------------------------------------
 
     const payment =
       body.payment || {};
-
-    // -------------------------------------------------
-    // STATUS HTTP
-    // -------------------------------------------------
-
-    const statusCode =
-      response.status;
 
     // -------------------------------------------------
     // SESSION ID
@@ -467,258 +735,186 @@ export async function processSerdiPayPayment(
         ? String(
             payment.transactionId
           )
-        : payment.txId
-          ? String(
-              payment.txId
-            )
-          : null;
+        : null;
 
     // -------------------------------------------------
-    // STATUS
+    // SUCCÈS
     // -------------------------------------------------
 
-    let status:
-      | "pending"
-      | "success"
-      | "failed";
+    console.log("");
+    console.log(
+      "========================================"
+    );
+    console.log(
+      "✅ REQUÊTE SERDIPAY ACCEPTÉE"
+    );
+    console.log(
+      "========================================"
+    );
 
-    const apiStatus =
-      String(
-        payment.status ||
-        body.status ||
-        ""
-      ).toLowerCase();
+    console.log(
+      "Session ID :",
+      sessionId
+    );
 
-    // -------------------------------------------------
-    // SUCCESS
-    // -------------------------------------------------
-
-    if (
-      apiStatus === "success" ||
-      apiStatus === "successful" ||
-      apiStatus === "completed"
-    ) {
-
-      status =
-        "success";
-
-    }
-
-    // -------------------------------------------------
-    // FAILED
-    // -------------------------------------------------
-
-    else if (
-      apiStatus === "failed" ||
-      apiStatus === "failure" ||
-      apiStatus === "cancelled" ||
-      apiStatus === "canceled"
-    ) {
-
-      status =
-        "failed";
-
-    }
-
-    // -------------------------------------------------
-    // HTTP 4xx / 5xx
-    // -------------------------------------------------
-
-    else if (
-      statusCode >= 400
-    ) {
-
-      status =
-        "failed";
-
-    }
-
-    // -------------------------------------------------
-    // PENDING
-    // -------------------------------------------------
-
-    else {
-
-      status =
-        "pending";
-
-    }
-
-    // -------------------------------------------------
-    // RÉSULTAT
-    // -------------------------------------------------
+    console.log(
+      "Transaction ID :",
+      transactionId
+    );
 
     return {
 
-      success:
-        status !== "failed",
-
-      statusCode,
+      success: true,
 
       message:
         body.message ||
-        payment.message ||
-        "Transaction envoyée à SerdiPay.",
+        "Paiement SerdiPay initié avec succès.",
 
       sessionId,
 
       transactionId,
 
-      status,
+      payment,
 
-      raw:
-        body,
+      raw: body,
 
     };
 
   } catch (error: any) {
 
+    console.error("");
+    console.error(
+      "========================================"
+    );
+    console.error(
+      "❌ SERDIPAY PAYMENT ERROR"
+    );
+    console.error(
+      "========================================"
+    );
+
     // -------------------------------------------------
-    // ERREUR AXIOS
+    // ERREUR HTTP SERDIPAY
     // -------------------------------------------------
 
-    const statusCode =
-      error.response?.status ||
-      500;
+    if (error.response) {
 
-    const body =
-      error.response?.data ||
-      {};
+      console.error(
+        "Status :",
+        error.response.status
+      );
 
-    const payment =
-      body.payment ||
-      {};
+      console.error(
+        "Data :",
+        error.response.data
+      );
+
+      const message =
+        error.response.data?.message ||
+        "Erreur lors du paiement SerdiPay.";
+
+      throw {
+
+        status:
+          error.response.status,
+
+        message,
+
+        details:
+          error.response.data,
+
+      };
+    }
+
+    // -------------------------------------------------
+    // ERREUR GÉNÉRALE
+    // -------------------------------------------------
 
     console.error(
-      "❌ SERDIPAY PAYMENT ERROR:",
-      body ||
+      "Message :",
       error.message
     );
 
-    return {
+    throw {
 
-      success:
-        false,
-
-      statusCode,
+      status: 500,
 
       message:
-        body.message ||
         error.message ||
         "Erreur lors du paiement SerdiPay.",
 
-      sessionId:
-        payment.sessionId
-          ? String(
-              payment.sessionId
-            )
-          : null,
-
-      transactionId:
-        payment.transactionId
-          ? String(
-              payment.transactionId
-            )
-          : payment.txId
-            ? String(
-                payment.txId
-              )
-            : null,
-
-      status:
-        "failed",
-
-      raw:
-        body,
+      details:
+        error,
 
     };
   }
 }
 
 // =====================================================
-// ALIAS INITIATE
-// =====================================================
-//
-// Utilisé par les controllers.
-//
+// TESTER LA CONFIGURATION
 // =====================================================
 
-export async function initiateSerdiPayPayment(
-  data: SerdiPayPaymentData
-): Promise<SerdiPayPaymentResult> {
-
-  return processSerdiPayPayment(
-    data
-  );
-}
-
-// =====================================================
-// VÉRIFICATION DU STATUT
-// =====================================================
-//
-// IMPORTANT :
-// Nous ne supposons pas ici un endpoint SerdiPay
-// de vérification qui n'est pas confirmé.
-//
-// SerdiPay indique utiliser des webhooks pour notifier
-// les changements de statut.
-//
-// Cette fonction permet au controller de compiler,
-// mais elle ne doit PAS être utilisée comme source
-// définitive de confirmation d'un paiement.
-//
-// La confirmation définitive doit être faite via
-// le webhook SerdiPay.
-//
-// =====================================================
-
-export async function checkSerdiPayPaymentStatus(
-  transactionId: string
-): Promise<SerdiPayPaymentStatusResult> {
-
-  if (!transactionId) {
-
-    return {
-
-      success:
-        false,
-
-      status:
-        "failed",
-
-      transactionId:
-        "",
-
-      message:
-        "TransactionId manquant.",
-
-    };
-  }
-
-  // -------------------------------------------------
-  // IMPORTANT
-  // -------------------------------------------------
-  //
-  // Pour l'instant, on ne marque jamais une transaction
-  // comme SUCCESS simplement parce qu'elle possède
-  // un transactionId.
-  //
-  // La confirmation doit venir de SerdiPay/webhook.
-  //
-  // -------------------------------------------------
+export function getSerdiPayConfiguration() {
 
   return {
 
-    success:
-      false,
+    baseUrl:
+      SERDIPAY_BASE_URL,
 
-    status:
-      "pending",
+    tokenUrl:
+      SERDIPAY_TOKEN_URL,
 
-    transactionId,
+    paymentUrl:
+      SERDIPAY_PAYMENT_URL,
 
-    message:
-      "Statut en attente de confirmation SerdiPay.",
+    emailConfigured:
+      Boolean(SERDIPAY_EMAIL),
+
+    passwordConfigured:
+      Boolean(SERDIPAY_PASSWORD),
+
+    apiIdConfigured:
+      Boolean(SERDIPAY_API_ID),
+
+    apiPasswordConfigured:
+      Boolean(
+        SERDIPAY_API_PASSWORD
+      ),
+
+    merchantCodeConfigured:
+      Boolean(
+        SERDIPAY_MERCHANT_CODE
+      ),
+
+    merchantPinConfigured:
+      Boolean(
+        SERDIPAY_MERCHANT_PIN
+      ),
+
+    tokenCached:
+      Boolean(accessToken),
+
+    tokenExpiresAt,
 
   };
 }
+
+// =====================================================
+// EXPORT DEFAULT
+// =====================================================
+
+export default {
+
+  getSerdiPayToken,
+
+  processSerdiPayPayment,
+
+  clearTokenCache,
+
+  getCurrentToken,
+
+  getTokenExpiration,
+
+  getSerdiPayConfiguration,
+
+};

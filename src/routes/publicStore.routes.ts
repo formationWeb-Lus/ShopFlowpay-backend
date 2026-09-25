@@ -1,24 +1,9 @@
-
 import { Router } from "express";
-
-import {
-  getPublicStore,
-} from "../controllers/publicStore.controller";
+import { getPublicStore } from "../controllers/publicStore.controller";
 
 const router = Router();
 
-/**
- * GET
- * Boutique publique d'un entrepreneur
- *
- * Exemple :
- * GET /api/public/store/coderise
- *
- * Aucun token nécessaire.
- */
-router.get(
-  "/store/:slug",
-  getPublicStore
-);
+// Endpoint public pour récupérer la boutique
+router.get("/store/:vendorId", getPublicStore);
 
 export default router;

@@ -61,6 +61,22 @@ router.post(
   initiatePayment
 );
 
+
+// =====================================================
+// CALLBACK SERDIPAY
+// =====================================================
+//
+// POST /api/payment/callback
+//
+// Cette route reçoit les callbacks transmis par
+// le callback centralisateur.
+//
+// =====================================================
+
+router.post(
+  "/callback",
+  paymentCallback
+);
 // =====================================================
 // VÉRIFIER LE STATUT D'UN PAIEMENT
 // =====================================================

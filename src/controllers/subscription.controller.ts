@@ -15,7 +15,7 @@ import {
 import {
   SerdiPayCurrency,
   SerdiPayTelecom,
-  initiateSerdiPayPayment,
+  processSerdiPayPayment,
 } from "../services/serdipay.service";
 
 import prisma from "../lib/prisma";
@@ -436,18 +436,12 @@ export async function initiateSubscriptionPayment(
      */
 
     const payment =
-      await initiateSerdiPayPayment({
-        clientPhone:
-          normalizedPhone,
-
-        amount,
-
-        currency:
-          selectedCurrency,
-
-        telecom:
-          selectedTelecom,
-      });
+  await processSerdiPayPayment({
+    clientPhone: normalizedPhone,
+    amount,
+    currency: selectedCurrency,
+    telecom: selectedTelecom,
+  });
 
     // =====================================================
     // REPONSE
@@ -558,3 +552,25 @@ export async function cancelSubscription(
     });
   }
 }
+
+
+// controllers/subscription.controller.ts
+
+export const getActiveSubscriptions = async (req: Request, res: Response) => {
+  try {
+    // Exemple direct avec Prisma / Mongoose / SQL :
+    const activeSubscriptions = await prisma.subscription.findMany({
+      where: { status: "ACTIVE" }
+    });
+
+    return res.json({
+      success: true,
+      data: activeSubscriptions
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};

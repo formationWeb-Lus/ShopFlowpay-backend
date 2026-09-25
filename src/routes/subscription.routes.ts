@@ -6,6 +6,7 @@ import {
     getMySubscription,
     initiateSubscriptionPayment,
     cancelSubscription,
+    getActiveSubscriptions,
 } from "../controllers/subscription.controller";
 
 import {
@@ -80,6 +81,22 @@ router.patch(
     cancelSubscription
 );
 
+
+// =====================================================
+// GET ACTIVE SUBSCRIBERS
+// GET /api/subscriptions/active
+// ADMIN
+// =====================================================
+// =====================================================
+// GET ACTIVE SUBSCRIBERS
+// GET /api/subscriptions/active
+// =====================================================
+
+router.get(
+    "/active",
+    // authenticateToken, <-- Désactivé temporairement
+    getActiveSubscriptions
+);
 
 
 export default router;
