@@ -1,13 +1,19 @@
+<<<<<<< HEAD
 
 import { Request, Response } from "express";
 
 import prisma from "../lib/prisma";
 
+=======
+import { Request, Response } from "express";
+import prisma from "../lib/prisma";
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 import {
   initiateSerdiPayPayment,
   checkSerdiPayPaymentStatus,
 } from "../services/serdipay.service";
 
+<<<<<<< HEAD
 // =====================================================
 // TYPES
 // =====================================================
@@ -110,6 +116,17 @@ function normalizePhone(
 //
 // =====================================================
 
+=======
+
+
+/**
+ * =====================================================
+ * INITIER UN PAIEMENT
+ * =====================================================
+ *
+ * POST /api/payment/initiate
+ */
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 export async function initiatePayment(
   req: Request,
   res: Response
@@ -117,9 +134,12 @@ export async function initiatePayment(
 
   try {
 
+<<<<<<< HEAD
     // =================================================
     // RÉCUPÉRER LES DONNÉES
     // =================================================
+=======
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
     const {
       userId,
@@ -130,6 +150,7 @@ export async function initiatePayment(
       currency,
     } = req.body;
 
+<<<<<<< HEAD
     // =================================================
     // VALIDATION PRÉSENCE
     // =================================================
@@ -346,6 +367,24 @@ export async function initiatePayment(
     // =================================================
     // CRÉER LE PAIEMENT EN BASE
     // =================================================
+=======
+
+
+    if (
+      !amount ||
+      !phone ||
+      !telecom
+    ) {
+
+      return res.status(400).json({
+        success:false,
+        message:"Informations paiement incomplètes."
+      });
+
+    }
+
+
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
     const payment =
       await prisma.payment.create({
@@ -353,6 +392,7 @@ export async function initiatePayment(
         data: {
 
           userId:
+<<<<<<< HEAD
             normalizedUserId,
 
           amount:
@@ -410,10 +450,34 @@ export async function initiatePayment(
     // AUCUNE conversion ici.
     //
     // =================================================
+=======
+            userId
+              ? Number(userId)
+              : null,
+
+          amount:
+            Number(amount),
+
+          currency,
+
+          phone,
+
+          telecom,
+
+          status:
+            "PENDING"
+
+        }
+
+      });
+
+
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
     const serdiResponse =
       await initiateSerdiPayPayment({
 
+<<<<<<< HEAD
         clientPhone:
           normalizedPhone,
 
@@ -492,6 +556,30 @@ export async function initiatePayment(
       },
 
       data: {
+=======
+        amount,
+
+        phone,
+
+        telecom,
+
+        currency,
+
+        reference:
+          String(payment.id)
+
+      });
+
+
+
+    await prisma.payment.update({
+
+      where:{
+        id:payment.id
+      },
+
+      data:{
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
         transactionId:
           serdiResponse.transactionId ||
@@ -499,6 +587,7 @@ export async function initiatePayment(
 
         sessionId:
           serdiResponse.sessionId ||
+<<<<<<< HEAD
           null,
 
         status:
@@ -518,10 +607,24 @@ export async function initiatePayment(
     return res.json({
 
       success: true,
+=======
+          null
+
+      }
+
+    });
+
+
+
+    return res.json({
+
+      success:true,
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
       paymentId:
         payment.id,
 
+<<<<<<< HEAD
       amount:
         numericAmount,
 
@@ -613,10 +716,67 @@ export async function checkPaymentStatus(
     // =================================================
     // RECHERCHER LE PAIEMENT
     // =================================================
+=======
+      data:
+        serdiResponse
+
+    });
+
+
+
+  } catch(error){
+
+
+    console.error(
+      "INITIATE PAYMENT ERROR:",
+      error
+    );
+
+
+    return res.status(500).json({
+
+      success:false,
+
+      message:
+        "Erreur initialisation paiement."
+
+    });
+
+
+  }
+
+}
+
+
+
+
+
+/**
+ * =====================================================
+ * VERIFIER STATUS PAIEMENT
+ * =====================================================
+ *
+ * GET /api/payment/status/:transactionId
+ */
+export async function checkPaymentStatus(
+  req: Request,
+  res: Response
+){
+
+  try {
+
+
+    const {
+      transactionId
+    } = req.params;
+
+
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
     const payment =
       await prisma.payment.findFirst({
 
+<<<<<<< HEAD
         where: {
 
           transactionId:
@@ -764,11 +924,109 @@ export async function checkPaymentStatus(
 //
 // =====================================================
 
+=======
+        where:{
+          transactionId
+        }
+
+      });
+
+
+
+    if(!payment){
+
+      return res.status(404).json({
+
+        success:false,
+
+        message:
+          "Paiement introuvable."
+
+      });
+
+    }
+
+
+
+
+    const status =
+      await checkSerdiPayPaymentStatus(
+        transactionId
+      );
+
+
+
+
+    await prisma.payment.update({
+
+      where:{
+        id:payment.id
+      },
+
+      data:{
+
+        status:
+          status.success
+            ? "SUCCESS"
+            : "PENDING"
+
+      }
+
+    });
+
+
+
+    return res.json({
+
+      success:true,
+
+      status
+
+    });
+
+
+
+  } catch(error){
+
+
+    console.error(
+      "CHECK PAYMENT ERROR",
+      error
+    );
+
+
+    return res.status(500).json({
+
+      success:false,
+
+      message:
+        "Erreur vérification paiement."
+
+    });
+
+
+  }
+
+}
+
+
+
+
+
+/**
+ * =====================================================
+ * MES TRANSACTIONS
+ * =====================================================
+ *
+ * GET /api/payment/transactions
+ */
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 export async function getMyTransactions(
   req: Request,
   res: Response
 ) {
 
+<<<<<<< HEAD
   try {
 
     // =================================================
@@ -802,10 +1060,23 @@ export async function getMyTransactions(
     // =================================================
     // RÉCUPÉRER PAIEMENTS
     // =================================================
+=======
+
+  try {
+
+
+    const userId =
+      Number(
+        (req as any).user.id
+      );
+
+
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
     const payments =
       await prisma.payment.findMany({
 
+<<<<<<< HEAD
         where: {
 
           userId,
@@ -834,37 +1105,91 @@ export async function getMyTransactions(
     const transactions =
       payments.map(
         (payment) => ({
+=======
+        where:{
+          userId
+        },
+
+
+        include:{
+          customer:true
+        },
+
+
+        orderBy:{
+          createdAt:"desc"
+        }
+
+      });
+
+
+
+    const transactions =
+      payments.map(
+        (payment)=>({
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
           id:
             payment.id,
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
           reference:
             payment.transactionId ||
             `TRX-${payment.id}`,
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
           customer:
             payment.customer?.name ||
             "Client inconnu",
 
+<<<<<<< HEAD
           amount:
             payment.amount,
 
           currency:
             payment.currency,
 
+=======
+
+          amount:
+            payment.amount,
+
+
+          currency:
+            payment.currency,
+
+
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
           method:
             payment.telecom ||
             "AUTRE",
 
+<<<<<<< HEAD
           status:
             payment.status,
 
           createdAt:
             payment.createdAt,
+=======
+
+          status:
+            payment.status,
+
+
+          createdAt:
+            payment.createdAt
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
 
         })
       );
 
+<<<<<<< HEAD
     // =================================================
     // RÉPONSE
     // =================================================
@@ -896,3 +1221,39 @@ export async function getMyTransactions(
     });
   }
 }
+=======
+
+
+    return res.json({
+
+      success:true,
+
+      transactions
+
+    });
+
+
+
+  } catch(error){
+
+
+    console.error(
+      "GET TRANSACTIONS ERROR",
+      error
+    );
+
+
+    return res.status(500).json({
+
+      success:false,
+
+      message:
+        "Erreur récupération transactions."
+
+    });
+
+
+  }
+
+}
+>>>>>>> 4e6d128294c58300ce75b35e1918f176b5d1b31a
