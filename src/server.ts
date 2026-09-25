@@ -2,8 +2,8 @@ import "dotenv/config";
 import express from "express";
 
 import authRoutes from "./routes/auth.routes";
+import adminRoutes from "./routes/admin.routes";
 import subscriptionRoutes from "./routes/subscription.routes";
-import productRoutes from "./routes/product.routes";
 import paymentPageRoutes from "./routes/paymentPage.routes";
 import publicRoutes from "./routes/public.routes";
 import paymentConfigRoutes from "./routes/paymentConfig.routes";
@@ -14,7 +14,6 @@ import publicPaymentPageRoutes from "./routes/publicPaymentPage.routes";
 import publicProductRoutes from "./routes/publicProduct.routes";
 import publicStoreRoutes from "./routes/publicStore.routes";
 import myStoreRoutes from "./routes/myStore.routes";
-import paymentRoutes from "./routes/payment.routes";
 import adminSubscriptionRoutes from "./routes/admin-subscription.routes";
 
 const app = express();
@@ -97,7 +96,6 @@ app.get("/api/health", (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
-app.use("/api/product", productRoutes);
 app.use("/api/payment-pages", paymentPageRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/payment-config", paymentConfigRoutes);
@@ -107,8 +105,8 @@ app.use("/api/marketing/social", socialRoutes);
 app.use("/api/public", publicPaymentPageRoutes);
 app.use("/api/public", publicProductRoutes);
 app.use("/api/public", publicStoreRoutes);
-app.use("/api/payment", paymentRoutes);
 // Ajout du préfixe dédié à la partie Admin
+app.use("/api/admin", adminRoutes);
 app.use("/api/admin/subscriptions", adminSubscriptionRoutes);
 
 // =====================================================
