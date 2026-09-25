@@ -10,6 +10,9 @@ import productRoutes from "./routes/product.routes";
 import paymentPageRoutes
   from "./routes/paymentPage.routes";
 
+import adminRoutes
+  from "./routes/admin.routes";
+
 import publicPaymentRoutes
   from "./routes/publicPayment.routes";
 
@@ -91,6 +94,12 @@ app.use(
   "/api/auth",
   authRoutes
 );
+
+app.use(
+
+  "/api/admin",
+  adminRoutes
+)
 
 
 // =====================================================
