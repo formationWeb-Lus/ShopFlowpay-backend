@@ -40,10 +40,21 @@ const app = express();
 // =====================================================
 // CORS
 // =====================================================
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://votre-domaine-frontend.vercel.app" // Remplacez par l'URL réelle de votre frontend
+];
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: (origin, callback) => {
+      // Autorise les requêtes sans origine (comme Postman ou les requêtes serveur à serveur)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Accès bloqué par la politique CORS"));
+      }
+    },
     credentials: true,
   })
 );
